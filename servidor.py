@@ -27,10 +27,17 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+TURNSTILE_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 MODELO = "whisper-large-v3-turbo"
 TRABALHOS = "trabalhos"
 CACHE = "cache"
+LIMITES = "limites"
 LIMITE_CORPO = 4096
+
+# Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
+# cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
+LIMITE_DIA = 5
+DURACAO_MAX = 600  # 10 minutos
 
 PLATAFORMAS = {
     "instagram.com": "instagram",
@@ -74,6 +81,51 @@ def normalizar(url):
 
 def chave_cache(url_normalizada):
     return hashlib.sha1(url_normalizada.encode("utf-8")).hexdigest()
+
+
+# ------------------------------------------------------------------- o teto
+
+def ip_de(handler):
+    """Atras do proxy do Render, o IP de quem pediu vem no X-Forwarded-For;
+    o primeiro da lista e o cliente, o resto sao os proxies do caminho."""
+    encaminhado = handler.headers.get("X-Forwarded-For", "")
+    if encaminhado:
+        return encaminhado.split(",")[0].strip()
+    return handler.client_address[0]
+
+
+def chave_ip(ip):
+    """Guarda o resumo, nunca o endereco. O teto so precisa saber se e a mesma
+    pessoa de antes, e nao precisa saber quem ela e."""
+    return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:32]
+
+
+def cobrar_do_teto(db, ip):
+    hoje = time.strftime("%Y-%m-%d")
+    ref = db.collection(LIMITES).document(hoje + "_" + chave_ip(ip))
+    doc = ref.get()
+    usados = (doc.to_dict() or {}).get("contagem", 0) if doc.exists else 0
+    if usados >= LIMITE_DIA:
+        raise Falha("LIMITE_DIARIO_ATINGIDO",
+                    "%d de %d hoje" % (usados, LIMITE_DIA))
+    ref.set({
+        "contagem": firestore.Increment(1),
+        "dia": hoje,
+        "atualizadoEm": firestore.SERVER_TIMESTAMP,
+    }, merge=True)
+
+
+def conferir_turnstile(token):
+    """So vale quando a chave existe no ambiente. Enquanto ela nao existir, o
+    Turnstile fica desligado e o teto por IP segura sozinho."""
+    segredo = os.environ.get("TURNSTILE_SECRET")
+    if not segredo:
+        return
+    if not token:
+        raise Falha("DESAFIO_FALTANDO", "a tela nao mandou o token do Turnstile")
+    r = requests.post(TURNSTILE_URL, data={"secret": segredo, "response": token}, timeout=15)
+    if not (r.ok and r.json().get("success")):
+        raise Falha("DESAFIO_RECUSADO", "o Turnstile nao validou este acesso")
 
 
 # ---------------------------------------------------------------- pipeline
@@ -132,11 +184,18 @@ def tentar_legenda(url, pasta):
 
 
 def baixar_audio(url, plataforma, pasta):
+    # O filtro de duracao vai no proprio yt-dlp: assim o video longo e recusado
+    # antes de gastar banda, em vez de ser medido depois de baixado. Video sem
+    # duracao declarada passa, porque recusar o desconhecido barraria coisa boa.
     ok, detalhe = rodar([
-        "yt-dlp", "-f", "bestaudio/best", "--no-playlist", "-o", "audio.%(ext)s", url,
+        "yt-dlp", "-f", "bestaudio/best", "--no-playlist",
+        "--match-filter", "duration<=%d | !duration" % DURACAO_MAX,
+        "-o", "audio.%(ext)s", url,
     ], pasta)
     achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
     if not ok or not achados:
+        if "does not pass filter" in detalhe:
+            raise Falha("VIDEO_LONGO_DEMAIS", "o teto e de %d minutos" % (DURACAO_MAX // 60))
         raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
     return achados[0]
 
@@ -281,7 +340,7 @@ class Motor:
 
 # -------------------------------------------------------------------- http
 
-def criar_trabalho(db, motor, url):
+def criar_trabalho(db, motor, url, ip, token):
     plataforma = plataforma_de(url)
     if not plataforma:
         raise Falha("PLATAFORMA_NAO_SUPORTADA", url)
@@ -313,6 +372,10 @@ def criar_trabalho(db, motor, url):
         ref.set(campos)
         return ref.id, "pronto"
 
+    # So o que vai custar trabalho de verdade passa pelo desafio e pelo teto.
+    conferir_turnstile(token)
+    cobrar_do_teto(db, ip)
+
     campos["estado"] = "na fila"
     campos["veioDoCache"] = False
     ref = db.collection(TRABALHOS).document()
@@ -324,7 +387,8 @@ def criar_trabalho(db, motor, url):
 AJUDA = (
     "Decupa, backend da Fase 2.\n\n"
     "POST /transcrever    corpo JSON com url, devolve o id do trabalho\n"
-    "GET  /trabalho/<id>  estado e resultado daquele trabalho\n\n"
+    "GET  /trabalho/<id>  estado e resultado daquele trabalho\n"
+    "GET  /config         o que a tela precisa saber antes de pedir\n\n"
     "Instagram, TikTok e Facebook. YouTube recusa pedido vindo de nuvem.\n"
 )
 
@@ -337,6 +401,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         caminho = urlparse(self.path).path
+        if caminho == "/config":
+            # A tela pergunta se o desafio esta ligado em vez de trazer a chave
+            # escrita no codigo. Assim ligar o Turnstile e mexer no Render, nao
+            # publicar versao nova do site.
+            self.json(200, {
+                "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
+                "limiteDia": LIMITE_DIA,
+                "duracaoMax": DURACAO_MAX,
+            })
+            return
         if caminho.startswith("/trabalho/"):
             trabalho_id = caminho[len("/trabalho/"):]
             doc = self.server.db.collection(TRABALHOS).document(trabalho_id).get()
@@ -360,6 +434,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             corpo = json.loads(self.rfile.read(tamanho) or b"{}")
             url = (corpo.get("url") or "").strip()
+            token = (corpo.get("desafio") or "").strip()
         except Exception:
             self.json(400, {"codigo": "CORPO_INVALIDO"})
             return
@@ -367,9 +442,11 @@ class Handler(BaseHTTPRequestHandler):
             self.json(400, {"codigo": "URL_AUSENTE"})
             return
         try:
-            trabalho_id, estado = criar_trabalho(self.server.db, self.server.motor, url)
+            trabalho_id, estado = criar_trabalho(
+                self.server.db, self.server.motor, url, ip_de(self), token)
         except Falha as f:
-            self.json(400, {"codigo": f.codigo, "detalhe": f.detalhe})
+            codigo = 429 if f.codigo == "LIMITE_DIARIO_ATINGIDO" else 400
+            self.json(codigo, {"codigo": f.codigo, "detalhe": f.detalhe})
             return
         self.json(202, {"id": trabalho_id, "estado": estado})
 

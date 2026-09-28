@@ -200,6 +200,11 @@ body {
   cursor: help;
 }
 
+/* ------------------------------------------------------------- o desafio */
+
+.desafio { margin-top: 22px; max-width: 320px; }
+.desafio[hidden] { display: none; }
+
 /* ---------------------------------------------------------------- a fita */
 
 .fita { margin-top: 52px; }

@@ -7,6 +7,24 @@
 <meta name="description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
 <meta name="theme-color" content="#0C4A45">
 
+<link rel="manifest" href="./manifest.json?v=1">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<!-- iOS: sem estas tags o app abre dentro do Safari, com barra de endereço -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Decupa">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Decupa">
+<meta property="og:title" content="Decupa — vídeo em texto">
+<meta property="og:description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
+<meta property="og:url" content="https://pampfelp.github.io/decupa/">
+<meta property="og:image" content="https://pampfelp.github.io/decupa/og.png">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700&family=IBM+Plex+Mono:wght@400;500&family=Spectral:wght@300;400;600&display=swap">
@@ -80,6 +98,9 @@
       <span class="porque">indisponível</span>
     </span>
   </div>
+
+  <!-- Só aparece quando o Turnstile estiver ligado no servidor. -->
+  <div class="desafio" id="desafio" hidden></div>
 
   <section class="fita" id="fita" hidden>
     <div class="etapas">

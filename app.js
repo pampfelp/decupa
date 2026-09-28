@@ -6,6 +6,14 @@
 
 import { db } from "./firebase-init.js?v=1";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=1";
+
+// Antes de qualquer await: o evento beforeinstallprompt do Android dispara
+// cedo e, se ninguem estiver escutando, passa e nao volta.
+iniciarBannerInstalacao({ icone: "icon-192.png", nomeApp: "o Decupa" });
+if ("serviceWorker" in navigator) {
+  addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js"));
+}
 
 const BACKEND = "https://decupa.onrender.com";
 const ETAPAS = ["baixando", "convertendo", "transcrevendo", "pronto"];
@@ -25,8 +33,17 @@ const FRASES = {
   CORPO_INVALIDO: "Não entendi esse link.",
   TRABALHO_NAO_ENCONTRADO: "Esse trabalho não existe mais.",
   FALHA_INESPERADA: "Alguma coisa quebrou no meio do caminho. Vale tentar de novo.",
-  SEM_RESPOSTA: "Não consegui falar com o servidor. Ele pode estar acordando: espere uns 50 segundos e tente de novo."
+  SEM_RESPOSTA: "Não consegui falar com o servidor. Ele pode estar acordando: espere uns 50 segundos e tente de novo.",
+  LIMITE_DIARIO_ATINGIDO: "Você já usou as transcrições de hoje. O limite volta amanhã. Link que já foi transcrito antes continua liberado, porque não custa nada.",
+  VIDEO_LONGO_DEMAIS: "Esse vídeo passa de 10 minutos. Por enquanto o Decupa cobre vídeo curto.",
+  DESAFIO_FALTANDO: "A verificação de que você não é um robô não carregou. Atualize a página.",
+  DESAFIO_RECUSADO: "A verificação de que você não é um robô não passou. Atualize a página e tente de novo."
 };
+
+// Fica vazio enquanto o Turnstile nao estiver ligado no servidor. Quem decide
+// e o /config, nao esta tela: ligar o desafio e mexer no Render, nao publicar
+// versao nova do site.
+let desafio = { sitekey: null, token: null, widget: null };
 
 const $ = (id) => document.getElementById(id);
 const campo = $("campo"), selo = $("selo"), botao = $("botao"), fita = $("fita");
@@ -248,7 +265,7 @@ async function comecar(url) {
     resposta = await fetch(BACKEND + "/transcrever", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url, desafio: desafio.token || "" })
     });
   } catch {
     mostrarErro("SEM_RESPOSTA", "");
@@ -258,9 +275,50 @@ async function comecar(url) {
   const corpo = await resposta.json().catch(() => ({}));
   if (!resposta.ok) {
     mostrarErro(corpo.codigo || "FALHA_INESPERADA", "");
+    renovarDesafio();
     return;
   }
+  renovarDesafio();
   escutar(corpo.id);
+}
+
+// ------------------------------------------------------------------ desafio
+
+// O token do Turnstile vale uma vez so. Depois de usar, pede outro, senao a
+// segunda transcricao da sessao seria recusada sem a pessoa entender por que.
+function renovarDesafio() {
+  if (desafio.widget === null || !window.turnstile) return;
+  desafio.token = null;
+  turnstile.reset(desafio.widget);
+}
+
+async function ligarDesafio() {
+  let config;
+  try {
+    config = await (await fetch(BACKEND + "/config")).json();
+  } catch {
+    return;  // servidor dormindo: o teto por IP segura, e o POST avisa depois
+  }
+  if (!config.turnstile) return;
+
+  desafio.sitekey = config.turnstile;
+  await new Promise((pronto) => {
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.async = true;
+    s.onload = pronto;
+    s.onerror = pronto;
+    document.head.appendChild(s);
+  });
+  if (!window.turnstile) return;
+
+  const caixa = document.getElementById("desafio");
+  caixa.hidden = false;
+  desafio.widget = turnstile.render(caixa, {
+    sitekey: desafio.sitekey,
+    size: "flexible",
+    callback: (t) => { desafio.token = t; }
+  });
 }
 
 // -------------------------------------------------------------------- ligacao
@@ -308,3 +366,4 @@ $("baixar").addEventListener("click", () => {
 
 digitarMarca();
 pintar();
+ligarDesafio();
