@@ -424,6 +424,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         caminho = urlparse(self.path).path
+        if caminho == "/diagnostico":
+            # TEMPORARIO. Existe so pra descobrir qual cabecalho traz o IP de
+            # verdade atras do proxy do Render, em vez de eu supor de novo.
+            # Sai assim que a resposta aparecer.
+            interessantes = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip",
+                             "x-real-ip", "x-client-ip", "forwarded", "cf-ray")
+            self.json(200, {
+                "cabecalhos": {k: v for k, v in self.headers.items()
+                               if k.lower() in interessantes},
+                "conexao": self.client_address[0],
+            })
+            return
         if caminho == "/config":
             # A tela pergunta se o desafio esta ligado em vez de trazer a chave
             # escrita no codigo. Assim ligar o Turnstile e mexer no Render, nao
