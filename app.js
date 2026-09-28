@@ -4,9 +4,9 @@
 // quem manda e o Firestore: o backend escreve o andamento no documento e esta
 // tela escuta por onSnapshot. Por isso nada aqui fica perguntando "ja acabou?".
 
-import { db } from "./firebase-init.js?v=3";
+import { db } from "./firebase-init.js?v=4";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=3";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=4";
 
 // Antes de qualquer await: o evento beforeinstallprompt do Android dispara
 // cedo e, se ninguem estiver escutando, passa e nao volta.
@@ -113,7 +113,7 @@ function zerarFita() {
 
 function mostrarErro(codigo, detalhe) {
   clearInterval(relogio);
-  recado.classList.remove("esperando");
+  recado.classList.remove("esperando", "quebrado");
   $("recado-frase").textContent = FRASES[codigo] || FRASES.FALHA_INESPERADA;
   $("recado-codigo").textContent = detalhe ? codigo + " · " + detalhe : codigo;
   recado.hidden = false;
@@ -291,7 +291,7 @@ function mostrarAviso(frase) {
 }
 
 function esconderAviso() {
-  recado.classList.remove("esperando");
+  recado.classList.remove("esperando", "quebrado");
   recado.hidden = true;
 }
 
@@ -358,8 +358,25 @@ async function ligarDesafio() {
   desafio.widget = turnstile.render(caixa, {
     sitekey: desafio.sitekey,
     size: "flexible",
-    callback: (t) => { desafio.token = t; }
+    callback: (t) => { desafio.token = t; },
+    "error-callback": () => avisarDesafioQuebrado(),
+    "timeout-callback": () => avisarDesafioQuebrado()
   });
+
+  // Se a chave estiver mal configurada, o Turnstile nao monta o desafio e nao
+  // dispara evento nenhum: nem sucesso, nem erro. Sem esta checagem a pessoa
+  // so descobre depois de colar o link e clicar, e o motivo fica escondido.
+  setTimeout(() => { if (!desafio.token) avisarDesafioQuebrado(); }, 12000);
+}
+
+function avisarDesafioQuebrado() {
+  if (desafio.token || recado.classList.contains("quebrado")) return;
+  $("recado-frase").textContent =
+    "A verificação de que você não é um robô não carregou, e sem ela o servidor recusa o pedido. Atualize a página; se continuar, o problema é de configuração e não seu.";
+  $("recado-codigo").textContent = "DESAFIO_NAO_CARREGOU";
+  recado.classList.add("quebrado");
+  recado.hidden = false;
+  fita.hidden = false;
 }
 
 // -------------------------------------------------------------------- ligacao

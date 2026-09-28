@@ -265,6 +265,7 @@ body {
 /* Esperar nao e falhar: enquanto o servidor acorda, o aviso e do tom do
    projeto, e nao da cor de erro. */
 .recado.esperando { border-left-color: var(--accent); }
+.recado.quebrado { border-left-color: var(--warn); }
 
 .recado .codigo {
   display: block;
