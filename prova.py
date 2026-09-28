@@ -158,7 +158,7 @@ def processar(url):
 
 
 AJUDA = (
-    "Decupa, prova da Fase 1.\n\n"
+    "Decupa, prova da Fase 1, com deno.\n\n"
     "GET /transcrever?url=<link do video>\n\n"
     "Instagram, TikTok, YouTube e Facebook. Devolve o texto e as medicoes.\n"
 )
