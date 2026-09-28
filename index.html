@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Decupa — vídeo em texto</title>
+<meta name="description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
+<meta name="theme-color" content="#0C4A45">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700&family=IBM+Plex+Mono:wght@400;500&family=Spectral:wght@300;400;600&display=swap">
+
+<link rel="stylesheet" href="./style.css?v=1">
+</head>
+<body>
+
+<div class="folha">
+
+  <div class="sobrancelha">Do vídeo para o texto</div>
+  <div class="risco"></div>
+
+  <header class="cabecalho">
+    <h1 class="marca"><span id="marca-letras"></span><span class="cursor" id="cursor"></span></h1>
+    <p class="promessa">Transforme links de vídeos em texto de forma simples, rápida e precisa.</p>
+  </header>
+
+  <form class="fresta" id="forma" autocomplete="off">
+    <span class="icone" aria-hidden="true">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>
+        <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>
+      </svg>
+    </span>
+    <input id="campo" type="url" inputmode="url" placeholder="Cole o link do vídeo aqui" aria-label="Link do vídeo">
+    <span class="selo" id="selo" aria-live="polite"></span>
+    <button class="comecar" id="botao" type="submit">
+      Começar
+      <svg width="26" height="10" viewBox="0 0 26 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M0 5h24"/><path d="M20 1.5 24 5l-4 3.5"/>
+      </svg>
+    </button>
+  </form>
+
+  <div class="plataformas">
+    <span class="rotulo">Funciona com</span>
+
+    <span class="plataforma" title="Instagram">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/>
+        <circle cx="12" cy="12" r="4.2"/>
+        <circle cx="17.4" cy="6.6" r="1.1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="nome">Instagram</span>
+    </span>
+
+    <span class="plataforma" title="TikTok">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 3v11.6a3.9 3.9 0 1 1-3.3-3.85"/>
+        <path d="M14 3c.5 2.6 2.2 4.2 4.8 4.4"/>
+      </svg>
+      <span class="nome">TikTok</span>
+    </span>
+
+    <span class="plataforma" title="Facebook">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9.5"/>
+        <path d="M14.9 8.2h-1.6c-.9 0-1.5.6-1.5 1.5v2h3l-.4 2.7h-2.6v5.1"/>
+        <path d="M9.4 11.7h2.4"/>
+      </svg>
+      <span class="nome">Facebook</span>
+    </span>
+
+    <span class="plataforma indisponivel" title="O YouTube recusa download a partir de servidor. Medido em 28/09/2026.">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.2" y="5.5" width="19.6" height="13" rx="4"/>
+        <path d="M10.3 9.4 15 12l-4.7 2.6z"/>
+      </svg>
+      <span class="nome">YouTube</span>
+      <span class="porque">indisponível</span>
+    </span>
+  </div>
+
+  <section class="fita" id="fita" hidden>
+    <div class="etapas">
+      <div class="etapa" data-etapa="baixando"><div>Baixando</div><div class="tick"></div></div>
+      <div class="etapa" data-etapa="convertendo"><div>Convertendo</div><div class="tick"></div></div>
+      <div class="etapa" data-etapa="transcrevendo"><div>Transcrevendo</div><div class="tick"></div></div>
+      <div class="etapa" data-etapa="pronto"><div>Pronto</div><div class="tick"></div></div>
+    </div>
+    <div class="trilho">
+      <div class="cheio" id="cheio"></div>
+      <div class="marcador" id="marcador"></div>
+    </div>
+    <p class="recado" id="recado" hidden><span id="recado-frase"></span><span class="codigo" id="recado-codigo"></span></p>
+  </section>
+
+  <section class="leitura">
+    <aside class="nota">
+      <span id="nota-texto">Mais tempo para o que realmente importa.</span>
+      <div class="risco"></div>
+    </aside>
+    <div class="coluna">
+      <div class="sobrancelha apagada" id="etiqueta-leitura">O que o Decupa faz</div>
+      <p class="abertura" id="abertura">A gente sempre achou que o mais difícil era gravar. Mas, no fim, o que realmente consome tempo é transformar tudo isso em texto.</p>
+      <div class="corpo" id="corpo">
+        <p>Por trás de cada vídeo existe uma história, uma ideia, uma conversa que merece ser bem registrada. A decupagem é o que conecta o que foi dito ao que vai ser lido, pesquisado, organizado e compartilhado. É o vídeo ganhando uma segunda vida, em palavras.</p>
+      </div>
+      <p class="marca-cache" id="marca-cache" hidden></p>
+    </div>
+  </section>
+
+</div>
+
+<div class="certo" id="certo" hidden aria-hidden="true">
+  <svg viewBox="0 0 64 64">
+    <circle cx="32" cy="32" r="28"/>
+    <path d="M20 33.5 L28.5 42 L44 24"/>
+  </svg>
+</div>
+
+<div class="fundo-modal" id="fundo-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+    <div class="cabeca">
+      <span class="sobrancelha" id="modal-titulo">Transcrição</span>
+      <span class="meta" id="modal-meta"></span>
+    </div>
+    <div class="texto" id="modal-texto"></div>
+    <div class="acoes">
+      <button class="cheia" id="copiar" type="button">Copiar tudo</button>
+      <button id="baixar" type="button">Baixar .txt</button>
+      <button id="fechar" type="button">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./app.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decupa — esqueleto</title>
+<!--
+  Passo 3 da Fase 3: esqueleto. So estrutura e posicao.
+  Sem cor final, sem tipografia final, sem textura. Tudo cinza de proposito:
+  e aqui que se enxerga proporcao errada, antes dela ser herdada por tudo.
+  A animacao ja esta aqui porque movimento tambem e estrutura.
+-->
+<style>
+  :root {
+    --tinta: #222;
+    --meio: #767676;
+    --fraco: #c9c9c9;
+    --fundo: #fff;
+    --linha: #ddd;
+    --medida: 940px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 56px 24px 96px;
+    background: var(--fundo);
+    color: var(--tinta);
+    font: 16px/1.5 system-ui, sans-serif;
+  }
+  .folha { max-width: var(--medida); margin: 0 auto; }
+
+  .sobrancelha {
+    font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--meio);
+  }
+  .risco { width: 34px; height: 2px; background: var(--fraco); margin: 10px 0 0; }
+
+  /* 1. cabecalho: marca gigante a esquerda, promessa a direita */
+  .cabecalho {
+    display: flex; align-items: flex-start; gap: 40px;
+    margin: 34px 0 0;
+  }
+  .marca {
+    font-size: 132px; line-height: .86; letter-spacing: -.02em;
+    font-weight: 700; margin: 0; flex: 0 0 auto;
+  }
+  .promessa {
+    font-size: 19px; line-height: 1.35; color: var(--tinta);
+    max-width: 220px; margin-top: 18px;
+  }
+
+  /* 2. a fresta onde o link entra */
+  .fresta {
+    display: flex; align-items: stretch;
+    border: 1px solid var(--linha); background: #fafafa;
+    margin-top: 34px;
+  }
+  .fresta .icone { width: 58px; display: grid; place-items: center; color: var(--meio); }
+  .fresta input {
+    flex: 1; border: 0; background: transparent; outline: none;
+    font: inherit; font-size: 17px; color: var(--tinta); padding: 22px 0;
+  }
+  .fresta input::placeholder { color: var(--meio); }
+  .comecar {
+    border: 0; background: var(--tinta); color: #fff; cursor: pointer;
+    font: inherit; font-size: 13px; letter-spacing: .16em; text-transform: uppercase;
+    padding: 0 38px; display: flex; align-items: center; gap: 14px;
+  }
+  .selo {
+    align-self: center; margin-right: 18px; padding: 5px 12px;
+    border: 1px solid var(--linha); border-radius: 999px;
+    font-size: 12px; letter-spacing: .08em; color: var(--meio);
+    visibility: hidden;
+  }
+  .selo.aceso { visibility: visible; }
+
+  /* 3. a fita: quatro etapas com o marcador correndo */
+  .fita { margin-top: 48px; }
+  .etapas {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--fraco);
+  }
+  .etapa { transition: color .3s; }
+  .etapa.ativa { color: var(--tinta); }
+  .etapa.feita { color: var(--meio); }
+  .etapa .marca-tick { width: 1px; height: 14px; background: var(--fraco); margin-top: 8px; }
+  .trilho {
+    position: relative; height: 22px; margin-top: 8px;
+    background-image: repeating-linear-gradient(to right,
+      var(--fraco) 0 9px, transparent 9px 14px);
+    background-size: auto 10px; background-repeat: repeat-x;
+    background-position: 0 center;
+  }
+  .cheio {
+    position: absolute; inset: 0 auto 0 0; width: 0;
+    background-image: repeating-linear-gradient(to right,
+      var(--tinta) 0 9px, transparent 9px 14px);
+    background-size: auto 10px; background-repeat: repeat-x;
+    background-position: 0 center;
+    transition: width .6s ease-out;
+  }
+  .marcador {
+    position: absolute; top: 50%; left: 0; width: 13px; height: 13px;
+    margin: -6.5px 0 0 -6.5px; border-radius: 50%; background: var(--tinta);
+    transition: left .6s ease-out;
+  }
+  .marcador::after {
+    content: ""; position: absolute; left: 50%; top: -18px;
+    width: 1px; height: 46px; background: var(--tinta); opacity: .35;
+  }
+
+  /* 4. o texto, tratado como pagina */
+  .leitura { display: flex; gap: 38px; margin-top: 78px; }
+  .nota {
+    flex: 0 0 170px; font-size: 12px; letter-spacing: .16em;
+    text-transform: uppercase; line-height: 1.9; color: var(--meio);
+    padding-top: 92px;
+  }
+  .coluna { border-left: 2px solid var(--fraco); padding-left: 34px; }
+  .abertura { font-size: 30px; line-height: 1.3; margin: 16px 0 24px; }
+  .corpo { font-size: 17px; line-height: 1.75; max-width: 34em; color: #333; }
+
+  /* 5. o certo girando, e o modal */
+  /* Flutua por cima em vez de ocupar espaco: se entrasse no fluxo, a pagina
+     daria um pulo de 120px bem no momento em que a pessoa esta lendo. */
+  .certo {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    z-index: 290; pointer-events: none;
+  }
+  .certo[hidden] { display: none; }
+  .certo svg { width: 64px; height: 64px; }
+  .certo circle, .certo path {
+    fill: none; stroke: var(--tinta); stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .certo circle { stroke-dasharray: 176; stroke-dashoffset: 176; }
+  .certo path { stroke-dasharray: 40; stroke-dashoffset: 40; }
+  .certo.rodando svg { animation: gira .7s ease-out both; }
+  .certo.rodando circle { animation: risca .55s ease-out .05s forwards; }
+  .certo.rodando path { animation: risca .3s ease-out .5s forwards; }
+  @keyframes gira { from { transform: rotate(-180deg) scale(.7); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes risca { to { stroke-dashoffset: 0 } }
+
+  .fundo-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    display: none; place-items: center; padding: 24px; z-index: 300;
+  }
+  .fundo-modal.aberto { display: grid; }
+  .modal {
+    background: var(--fundo); width: min(720px, 100%); max-height: 86vh;
+    overflow: auto; padding: 38px 40px 32px; border: 1px solid var(--linha);
+    animation: sobe .25s ease-out both;
+  }
+  @keyframes sobe { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+  .modal h2 { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--meio); margin: 0 0 18px; font-weight: 400; }
+  .modal .texto { font-size: 17px; line-height: 1.75; }
+  .acoes { display: flex; gap: 12px; margin-top: 30px; }
+  .acoes button {
+    font: inherit; font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+    padding: 13px 24px; border: 1px solid var(--tinta); background: transparent;
+    color: var(--tinta); cursor: pointer;
+  }
+  .acoes button.cheia { background: var(--tinta); color: #fff; }
+
+  @media (max-width: 760px) {
+    body { padding: 32px 18px 72px; }
+    .cabecalho { flex-direction: column; gap: 14px; }
+    .marca { font-size: 72px; }
+    .promessa { max-width: none; margin-top: 0; }
+    .fresta { flex-wrap: wrap; }
+    .fresta input { padding: 16px 0; min-width: 0; }
+    .comecar { width: 100%; justify-content: center; padding: 16px; }
+    .etapas { font-size: 9px; letter-spacing: .08em; }
+    .leitura { flex-direction: column; gap: 22px; }
+    .nota { padding-top: 0; flex: none; }
+    .coluna { padding-left: 20px; }
+    .abertura { font-size: 23px; }
+    /* crenca 15: no celular o painel de detalhe e tela cheia */
+    .fundo-modal { padding: 0; }
+    .modal { width: 100%; height: 100vh; max-height: none; border: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="folha">
+
+  <div class="sobrancelha">Do vídeo para o texto</div>
+  <div class="risco"></div>
+
+  <header class="cabecalho">
+    <h1 class="marca">Decupa</h1>
+    <p class="promessa">Transforme links de vídeos em texto de forma simples, rápida e precisa.</p>
+  </header>
+
+  <form class="fresta" id="forma">
+    <span class="icone" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>
+        <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>
+      </svg>
+    </span>
+    <input id="campo" type="text" placeholder="Cole o link do vídeo aqui" autocomplete="off">
+    <span class="selo" id="selo">Instagram</span>
+    <button class="comecar" type="submit">Começar <span aria-hidden="true">&#8594;</span></button>
+  </form>
+
+  <section class="fita">
+    <div class="etapas" id="etapas">
+      <div class="etapa"><div>Baixando</div><div class="marca-tick"></div></div>
+      <div class="etapa"><div>Convertendo</div><div class="marca-tick"></div></div>
+      <div class="etapa"><div>Transcrevendo</div><div class="marca-tick"></div></div>
+      <div class="etapa"><div>Pronto</div><div class="marca-tick"></div></div>
+    </div>
+    <div class="trilho">
+      <div class="cheio" id="cheio"></div>
+      <div class="marcador" id="marcador"></div>
+    </div>
+  </section>
+
+  <div class="certo" id="certo" hidden>
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="28"/>
+      <path d="M20 33.5 L28.5 42 L44 24"/>
+    </svg>
+  </div>
+
+  <section class="leitura">
+    <aside class="nota">Mais tempo para o que realmente importa.</aside>
+    <div class="coluna">
+      <div class="sobrancelha">Transcrição</div>
+      <p class="abertura">A gente sempre achou que o mais difícil era gravar. Mas, no fim, o que realmente consome tempo é transformar tudo isso em texto.</p>
+      <p class="corpo">Por trás de cada vídeo existe uma história, uma ideia, uma conversa que merece ser bem registrada. A decupagem é o que conecta o que foi dito ao que vai ser lido, pesquisado, organizado e compartilhado. É o vídeo ganhando uma segunda vida, em palavras.</p>
+    </div>
+  </section>
+
+</div>
+
+<div class="fundo-modal" id="fundo-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Transcrição">
+    <h2>Transcrição</h2>
+    <div class="texto" id="texto-modal"></div>
+    <div class="acoes">
+      <button class="cheia" id="copiar">Copiar tudo</button>
+      <button id="fechar">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// A fita anda dentro da etapa atual e so pula quando a etapa muda de verdade.
+// No esqueleto a mudanca e simulada; na versao ligada quem manda e o Firestore.
+// Nunca alcanca o fim da etapa sozinha: passo proporcional ao que falta.
+// ---------------------------------------------------------------------------
+const ETAPAS = ["baixando", "convertendo", "transcrevendo", "pronto"];
+const PASSO_MS = 2000;
+
+const cheio = document.getElementById("cheio");
+const marcador = document.getElementById("marcador");
+const caixasEtapa = [...document.querySelectorAll(".etapa")];
+const certo = document.getElementById("certo");
+const fundoModal = document.getElementById("fundo-modal");
+const selo = document.getElementById("selo");
+
+let etapaAtual = -1;
+let progresso = 0;
+let relogio = null;
+
+function pintar() {
+  cheio.style.width = (progresso * 100) + "%";
+  marcador.style.left = (progresso * 100) + "%";
+  caixasEtapa.forEach((c, i) => {
+    c.classList.toggle("ativa", i === etapaAtual);
+    c.classList.toggle("feita", i < etapaAtual);
+  });
+}
+
+function irPara(indice) {
+  etapaAtual = indice;
+  progresso = Math.max(progresso, indice / ETAPAS.length);
+  pintar();
+}
+
+function rastejar() {
+  const teto = (etapaAtual + 1) / ETAPAS.length;
+  progresso += (teto - progresso) * 0.38;
+  pintar();
+}
+
+function comecar() {
+  clearInterval(relogio);
+  progresso = 0;
+  irPara(0);
+  relogio = setInterval(rastejar, PASSO_MS);
+  rastejar();
+
+  // Tempos aproximados do que foi medido em 28/09: download ~8s,
+  // conversao ~3s, Groq <1s. Aqui so pra ver o movimento.
+  setTimeout(() => irPara(1), 6000);
+  setTimeout(() => irPara(2), 9000);
+  setTimeout(concluir, 11000);
+}
+
+function concluir() {
+  clearInterval(relogio);
+  etapaAtual = 3;
+  progresso = 1;
+  pintar();
+
+  certo.hidden = false;
+  certo.classList.remove("rodando");
+  void certo.offsetWidth;
+  certo.classList.add("rodando");
+
+  setTimeout(abrirModal, 900);
+}
+
+function abrirModal() {
+  document.getElementById("texto-modal").textContent =
+    document.querySelector(".abertura").textContent + " " +
+    document.querySelector(".corpo").textContent;
+  fundoModal.classList.add("aberto");
+}
+
+document.getElementById("forma").addEventListener("submit", (e) => {
+  e.preventDefault();
+  comecar();
+});
+
+// O selo da plataforma acende dentro do proprio campo, antes de clicar em nada.
+document.getElementById("campo").addEventListener("input", (e) => {
+  const v = e.target.value.toLowerCase();
+  const achou = ["instagram", "tiktok", "youtube", "facebook"].find(p => v.includes(p));
+  selo.textContent = achou ? achou[0].toUpperCase() + achou.slice(1) : "";
+  selo.classList.toggle("aceso", !!achou);
+});
+
+document.getElementById("fechar").addEventListener("click", () => fundoModal.classList.remove("aberto"));
+fundoModal.addEventListener("click", (e) => { if (e.target === fundoModal) fundoModal.classList.remove("aberto"); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") fundoModal.classList.remove("aberto"); });
+
+document.getElementById("copiar").addEventListener("click", async (e) => {
+  await navigator.clipboard.writeText(document.getElementById("texto-modal").textContent);
+  e.target.textContent = "Copiado";
+  setTimeout(() => { e.target.textContent = "Copiar tudo"; }, 1600);
+});
+
+pintar();
+</script>
+</body>
+</html>

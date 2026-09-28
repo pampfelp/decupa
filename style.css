@@ -1,0 +1,393 @@
+/* Decupa — camadas na ordem do design system: fundo, blocos, icones, tipografia.
+   A referencia aprovada esta em telas/referencia-aprovada.webp */
+
+:root {
+  /* Paleta monocromatica: a cor de marca e a de destaque sao a mesma, de
+     proposito. O design system permite, desde que dito aqui, e forcar uma
+     segunda cor so pra diferenciar as variaveis deixaria a tela pior. */
+  --bg: #F1EEE2;           /* papel quente */
+  --panel: #FAF8F1;        /* modal e campo */
+  --ink: #131D1C;          /* tinta quase preta, com fundo de verde */
+  --ink-soft: #6A6A5F;
+  --ink-faint: #A7A296;
+  --line: #DAD5C5;
+  --radius: 0px;           /* nada arredondado: a referencia e de impressao */
+
+  --accent: #0C4A45;       /* teal escuro, uma passada de tinta so */
+  --accent-soft: #E2EAE7;
+  --accent-deep: #073430;
+  --roxo: #0C4A45;         /* nome historico da variavel de marca */
+
+  --credit: #1FAA59; --debit: #E5484D; --warn: #D98E04; --info: #2C6BE0;
+
+  --display: 'Bodoni Moda', Georgia, serif;
+  --sans: 'Spectral', Georgia, serif;
+  --mono: 'IBM Plex Mono', monospace;
+
+  --medida: 1080px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 54px 28px 110px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 17px/1.75 var(--sans);
+  /* textura de papel discreta, feita com gradientes pra nao carregar imagem */
+  background-image:
+    radial-gradient(circle at 18% 12%, rgba(12,74,69,.035), transparent 45%),
+    radial-gradient(circle at 82% 70%, rgba(19,29,28,.03), transparent 40%);
+}
+
+.folha { max-width: var(--medida); margin: 0 auto; }
+
+/* ---------------------------------------------------------- sobrancelhas */
+
+.sobrancelha {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.sobrancelha.apagada { color: var(--ink-faint); }
+.risco { width: 34px; height: 2px; background: var(--accent); margin: 12px 0 0; }
+
+/* -------------------------------------------------------------- cabecalho */
+
+.cabecalho {
+  display: flex;
+  align-items: flex-start;
+  gap: 48px;
+  margin: 30px 0 0;
+}
+
+.marca {
+  font-family: var(--display);
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-size: clamp(64px, 13vw, 168px);
+  line-height: .84;
+  letter-spacing: -.015em;
+  margin: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* o cursor da digitacao; some sozinho quando a palavra termina */
+.cursor {
+  display: inline-block;
+  width: .055em;
+  background: var(--accent);
+  margin-left: .04em;
+  vertical-align: baseline;
+  height: .72em;
+  animation: pisca 1s steps(1) infinite;
+}
+.cursor.fim { animation: pisca 1s steps(1) 3, some .3s 3s forwards; }
+@keyframes pisca { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes some { to { opacity: 0; width: 0; margin: 0 } }
+
+.promessa {
+  font-size: 20px;
+  line-height: 1.4;
+  max-width: 250px;
+  margin-top: 16px;
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------- a fresta */
+
+.fresta {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  margin-top: 36px;
+}
+.fresta:focus-within { border-color: var(--accent); }
+
+.fresta .icone { width: 62px; display: grid; place-items: center; color: var(--ink-faint); }
+
+.fresta input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--ink);
+  padding: 24px 0;
+}
+.fresta input::placeholder { color: var(--ink-faint); }
+
+/* o selo da plataforma acende dentro do proprio campo, antes de clicar */
+.selo {
+  align-self: center;
+  margin-right: 18px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity .25s, transform .25s;
+  pointer-events: none;
+}
+.selo.aceso { opacity: 1; transform: none; }
+
+.comecar {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  padding: 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: background .2s;
+}
+.comecar:hover { background: var(--accent-deep); }
+.comecar:disabled { background: var(--ink-faint); cursor: default; }
+.comecar svg { transition: transform .2s; }
+.comecar:hover:not(:disabled) svg { transform: translateX(4px); }
+
+/* ---------------------------------------------------- plataformas aceitas */
+
+.plataformas {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  margin-top: 18px;
+  color: var(--ink-soft);
+}
+.plataformas .rotulo {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.plataforma { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+.plataforma svg { display: block; }
+.plataforma .nome {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+/* O YouTube recusa download a partir de servidor. Mostrar a marca acesa
+   prometeria o que nao entrega, entao ela aparece apagada e com o motivo. */
+.plataforma.indisponivel { color: var(--ink-faint); }
+.plataforma.indisponivel .porque {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  color: var(--ink-faint);
+  border-bottom: 1px dotted var(--ink-faint);
+  cursor: help;
+}
+
+/* ---------------------------------------------------------------- a fita */
+
+.fita { margin-top: 52px; }
+.fita[hidden] { display: none; }
+
+.etapas {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.etapa { transition: color .3s; }
+.etapa.feita { color: var(--ink-soft); }
+.etapa.ativa { color: var(--accent); }
+.etapa .tick { width: 1px; height: 15px; background: var(--line); margin-top: 9px; }
+.etapa.ativa .tick, .etapa.feita .tick { background: var(--accent); }
+
+.trilho {
+  position: relative;
+  height: 24px;
+  margin-top: 9px;
+  background-image: repeating-linear-gradient(to right, var(--line) 0 10px, transparent 10px 15px);
+  background-size: auto 11px;
+  background-repeat: repeat-x;
+  background-position: 0 center;
+}
+.cheio {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background-image: repeating-linear-gradient(to right, var(--accent) 0 10px, transparent 10px 15px);
+  background-size: auto 11px;
+  background-repeat: repeat-x;
+  background-position: 0 center;
+  transition: width .6s ease-out;
+}
+.marcador {
+  position: absolute; top: 50%; left: 0;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; background: var(--accent);
+  transition: left .6s ease-out;
+}
+.marcador::after {
+  content: ""; position: absolute; left: 50%; top: -20px;
+  width: 1px; height: 50px; background: var(--accent); opacity: .4;
+}
+
+/* a frase acionavel quando a fita para por erro */
+.recado {
+  margin-top: 26px;
+  border-left: 2px solid var(--debit);
+  padding: 4px 0 4px 20px;
+  font-size: 16px;
+  color: var(--ink);
+}
+.recado[hidden] { display: none; }
+.recado .codigo {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--ink-faint);
+  margin-top: 8px;
+}
+
+/* -------------------------------------------------------------- a leitura */
+
+.leitura { display: flex; gap: 44px; margin-top: 86px; }
+
+.nota {
+  flex: 0 0 190px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  line-height: 2.1;
+  color: var(--accent);
+  padding-top: 96px;
+}
+.nota .risco { margin-top: 18px; }
+
+.coluna { border-left: 2px solid var(--accent); padding-left: 38px; min-width: 0; }
+.abertura {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(26px, 3vw, 36px);
+  line-height: 1.32;
+  margin: 18px 0 26px;
+}
+.corpo { font-size: 17px; line-height: 1.85; max-width: 36em; }
+.corpo p + p { margin-top: 1em; }
+
+.marca-cache {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 18px;
+}
+.marca-cache[hidden] { display: none; }
+
+/* ------------------------------------------------------ o certo, e o modal */
+
+/* Flutua por cima em vez de ocupar espaco: no fluxo, ele daria um pulo na
+   pagina bem no momento em que a pessoa esta lendo. */
+.certo {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  z-index: 290; pointer-events: none;
+}
+.certo[hidden] { display: none; }
+.certo svg { width: 76px; height: 76px; }
+.certo circle, .certo path {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.certo circle { stroke-dasharray: 176; stroke-dashoffset: 176; }
+.certo path { stroke-dasharray: 44; stroke-dashoffset: 44; }
+.certo.rodando svg { animation: gira .7s cubic-bezier(.2,.8,.2,1) both; }
+.certo.rodando circle { animation: risca .55s ease-out .05s forwards; }
+.certo.rodando path { animation: risca .3s ease-out .52s forwards; }
+@keyframes gira { from { transform: rotate(-180deg) scale(.65); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes risca { to { stroke-dashoffset: 0 } }
+
+.fundo-modal {
+  position: fixed; inset: 0;
+  background: rgba(19,29,28,.5);
+  display: none; place-items: center;
+  padding: 28px; z-index: 300;
+}
+.fundo-modal.aberto { display: grid; }
+
+.modal {
+  background: var(--panel);
+  width: min(760px, 100%);
+  max-height: 86vh; overflow: auto;
+  padding: 42px 46px 34px;
+  border: 1px solid var(--line);
+  animation: sobe .26s ease-out both;
+}
+@keyframes sobe { from { transform: translateY(16px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+.modal .cabeca { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; margin-bottom: 22px; }
+.modal .meta { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+.modal .texto { font-size: 18px; line-height: 1.85; }
+
+.acoes { display: flex; gap: 12px; margin-top: 34px; flex-wrap: wrap; }
+.acoes button {
+  font-family: var(--mono);
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  padding: 15px 26px; border: 1px solid var(--accent);
+  background: transparent; color: var(--accent); cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.acoes button:hover { background: var(--accent-soft); }
+.acoes button.cheia { background: var(--accent); color: #fff; }
+.acoes button.cheia:hover { background: var(--accent-deep); }
+
+/* ------------------------------------------------------------------ celular */
+
+@media (max-width: 860px) {
+  body { padding: 30px 20px 80px; }
+  .cabecalho { flex-direction: column; gap: 16px; }
+  .marca { font-size: clamp(56px, 19vw, 96px); }
+  .promessa { max-width: none; margin-top: 0; font-size: 18px; }
+
+  .fresta { flex-wrap: wrap; }
+  .fresta .icone { width: 50px; }
+  .fresta input { padding: 18px 0; }
+  .selo { margin: 0 14px 0 0; }
+  .comecar { width: 100%; justify-content: center; padding: 18px; }
+
+  .plataformas { flex-wrap: wrap; gap: 14px 18px; }
+  .plataformas .rotulo { width: 100%; }
+
+  .etapas { font-size: 9px; letter-spacing: .06em; }
+
+  .leitura { flex-direction: column; gap: 24px; }
+  .nota { padding-top: 0; flex: none; line-height: 1.9; }
+  .coluna { padding-left: 22px; }
+
+  /* crenca 15: no celular o painel de detalhe e tela cheia */
+  .fundo-modal { padding: 0; }
+  .modal { width: 100%; height: 100dvh; max-height: none; border: 0; padding: 30px 22px 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
