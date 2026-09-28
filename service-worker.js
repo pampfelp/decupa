@@ -8,15 +8,15 @@
 // POR ORIGEM. Por isso o prefixo e proprio, e o activate so apaga o que
 // comeca com ele. Apagar "tudo que nao e meu" derruba o cache dos outros apps.
 const PREFIXO = "decupa-";
-const CACHE_NAME = PREFIXO + "shell-v8";
+const CACHE_NAME = PREFIXO + "shell-v9";
 const SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=8",
-  "./app.js?v=8",
-  "./firebase-init.js?v=8",
+  "./style.css?v=9",
+  "./app.js?v=9",
+  "./firebase-init.js?v=9",
   "./pwa-instalacao.js",
-  "./manifest.json?v=8",
+  "./manifest.json?v=9",
   "./icon-192.png",
   "./termos.html",
   "./privacidade.html",

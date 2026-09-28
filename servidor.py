@@ -36,7 +36,11 @@ LIMITE_CORPO = 4096
 
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
-LIMITE_DIA = 5
+# 25 por conexao por dia. O que limita de verdade e a cota da Groq, 8 horas de
+# audio por dia, que dao umas 320 transcricoes de reel: com 25, precisa de uma
+# duzia de pessoas usando pesado no mesmo dia pra acabar. Numero escolhido por
+# ele em 28/09, subindo dos 5 que o plano previa.
+LIMITE_DIA = 25
 
 # Transcricao que falhou nao e transcricao. Cobrar por ela faz a pessoa pagar
 # por defeito nosso, que foi exatamente o que aconteceu em 28/09: dois bugs
