@@ -251,49 +251,45 @@ def escolher_com_audio(candidatos):
 
 
 def baixar_audio(url, plataforma, pasta):
-    # A melhor trilha nao serve de nada aqui: tudo vira mono 16 kHz logo em
-    # seguida, e o Whisper nao enxerga diferenca acima de uns 64 kbps. Pegar a
-    # menor que sirva corta banda, tempo de download e trabalho do ffmpeg.
-    ok, detalhe = rodar([
-        "yt-dlp", "-f", "bestaudio[abr<=70]/bestaudio/bestaudio*/best", "--no-playlist",
-        "-o", "audio.%(ext)s", url,
-    ], pasta)
-    achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
-    if not ok or not achados:
-        raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
+    """Tenta a trilha de audio; se o que vier nao tiver audio, baixa o video
+    inteiro e deixa o ffmpeg tirar o audio dele.
 
-    escolhido = escolher_com_audio(achados)
-    if not escolhido:
-        raise Falha("SEM_AUDIO", "nenhum dos %d arquivos baixados tem faixa de audio" % len(achados))
-    print("baixados %d arquivos, escolhido %s" % (len(achados), os.path.basename(escolhido)), flush=True)
-    return escolhido
+    A primeira tentativa economiza banda quando funciona. A segunda e a que
+    nao tem como dar errado, e existe porque a primeira deu errado tres vezes
+    em 28/09: o yt-dlp entregou formato so de video quando pedimos "a melhor
+    trilha de audio", e nao ha jeito de confiar nesse rotulo.
+    """
+    tentativas = [
+        ("trilha de audio", "bestaudio*[acodec!=none]/bestaudio"),
+        ("video inteiro", "best/bestvideo*+bestaudio"),
+    ]
 
+    detalhe_final = ""
+    for nome, formato in tentativas:
+        sala = os.path.join(pasta, nome.split()[0])
+        os.makedirs(sala, exist_ok=True)
 
-# A Groq cobra por segundo de audio, entao segundo que nao tem fala e dinheiro
-# jogado fora. Em reel isso e quase zero e nao compensa o risco de cortar o
-# comeco de uma palavra, entao so entra em audio longo, onde a conta pesa.
-DURACAO_PARA_CORTAR_SILENCIO = 300  # 5 minutos
+        _, detalhe = rodar([
+            "yt-dlp", "-f", formato, "--no-playlist", "-o", "audio.%(ext)s", url,
+        ], sala)
+        detalhe_final = detalhe or detalhe_final
 
+        baixados = [a for a in glob.glob(os.path.join(sala, "audio.*")) if not a.endswith(".ogg")]
 
-def tem_audio(caminho):
-    """Video sem faixa de audio existe, e nesse caso a conversao falha com uma
-    mensagem que culpa o ffmpeg em vez de dizer o que aconteceu."""
-    p = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
-         "-show_entries", "stream=codec_type", "-of", "csv=p=0", caminho],
-        capture_output=True, text=True, timeout=60)
-    return "audio" in (p.stdout or "")
+        # Nao baixou nada: o problema e de acesso, e trocar de formato nao
+        # resolve. Devolve o erro de verdade em vez de insistir.
+        if not baixados:
+            raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
 
+        escolhido = escolher_com_audio(baixados)
+        if escolhido:
+            print("%s: %d arquivo(s), usando %s" % (nome, len(baixados), os.path.basename(escolhido)), flush=True)
+            return escolhido
 
-def duracao_de(caminho):
-    p = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=nw=1:nk=1", caminho],
-        capture_output=True, text=True, timeout=60)
-    try:
-        return float(p.stdout.strip())
-    except ValueError:
-        return 0.0
+        print("%s veio sem audio, tentando o proximo caminho" % nome, flush=True)
+
+    raise Falha("SEM_AUDIO",
+                "o video foi baixado inteiro e mesmo assim nao tem faixa de audio. " + detalhe_final)
 
 
 def comprimir(entrada, pasta):
