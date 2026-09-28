@@ -1,55 +1,83 @@
 # Decupa
 
-Cola o link de um video do Instagram, TikTok, YouTube ou Facebook e recebe a
+Cola o link de um video do Instagram, TikTok ou Facebook e recebe a
 transcricao em portugues.
 
-Status: **Fase 1**, a prova de fogo. Nao existe tela, nem fila, nem banco.
-O que esta aqui serve pra responder uma pergunta so, antes de construir
-qualquer coisa: da pra baixar dessas quatro plataformas a partir de um
-servidor de nuvem, ou o IP de datacenter e bloqueado?
+Status: **Fase 2**, o backend. Ainda nao existe tela; o que existe e a fila,
+o pipeline e os codigos de erro. A tela e a Fase 3.
 
 ## O que tem no repositorio
 
 | Arquivo | Para que serve |
 |---|---|
-| `prova.py` | O caminho inteiro: baixa o audio, comprime, transcreve na Groq |
-| `Dockerfile` | Imagem com `yt-dlp` e `ffmpeg`, que o Render usa pra subir |
+| `servidor.py` | A fila, o worker e o pipeline inteiro |
+| `Dockerfile` | Imagem com `yt-dlp`, `ffmpeg` e `deno`, que o Render usa pra subir |
+| `firestore.rules` | O que o navegador pode ler; o backend nao passa por elas |
+| `plano-de-execucao.md` | Por que cada decisao foi essa, inclusive as descartadas |
 
-## Como rodar
+## Variaveis de ambiente
 
-O servico sobe no Render como Web Service do tipo Docker, plano Free, com uma
-unica variavel de ambiente:
-
-```
-GROQ_API_KEY=<a chave de console.groq.com>
-```
-
-Com ele no ar:
+As duas ficam no painel do Render e nenhuma entra no repositorio.
 
 ```
-GET /transcrever?url=<link do video>
+GROQ_API_KEY        a chave de console.groq.com
+FIREBASE_CREDENCIAL o JSON inteiro da conta de servico, numa linha so
 ```
 
-A resposta e um JSON com o texto e as medicoes de cada etapa: quanto tempo
-levou o download, a conversao e a transcricao, quanto pesou o audio, e de
-onde veio o texto.
+## A API
+
+```
+POST /transcrever     corpo {"url": "<link do video>"}
+                      devolve {"id": "...", "estado": "na fila"} na hora
+GET  /trabalho/<id>   estado e resultado daquele trabalho
+```
+
+O `POST` nao espera o trabalho terminar. Download mais transcricao levam de 10
+a 60 segundos, e requisicao que segura isso estoura timeout de proxy e deixa a
+pessoa olhando pra tela parada. O documento em `trabalhos` anda sozinho por
+`na fila`, `baixando`, `convertendo`, `transcrevendo`, e para em `pronto` ou
+`erro`. A tela vai acompanhar por `onSnapshot`; o `GET /trabalho/<id>` existe
+pra conferir sem tela.
+
+## Erros com codigo, nunca mensagem generica
+
+A frase que a pessoa le e montada pela tela. O backend devolve o codigo e o
+detalhe tecnico.
+
+| Codigo | Quando |
+|---|---|
+| `PLATAFORMA_NAO_SUPORTADA` | dominio fora das quatro |
+| `YOUTUBE_BLOQUEADO` | o YouTube recusa pedido vindo de nuvem |
+| `INSTAGRAM_BLOQUEADO` | bloqueio ou exigencia de login no Instagram |
+| `DOWNLOAD_FALHOU` | qualquer outra falha do `yt-dlp` |
+| `CONVERSAO_FALHOU` | falha do `ffmpeg` |
+| `GROQ_RECUSOU` | a Groq devolveu erro |
 
 ## O caminho que o codigo faz
 
 1. Reconhece a plataforma pelo dominio.
-2. Se for YouTube, tenta a legenda automatica em portugues primeiro. Quando
-   existe, pula download, conversao e transcricao de uma vez.
-3. `yt-dlp -f bestaudio`, so a trilha de audio, nunca o video.
-4. `ffmpeg` para opus 16 kbps mono a 16 kHz. Uma hora de audio deve dar cerca
-   de 7 MB, e a Fase 1 existe tambem pra conferir esse numero.
-5. Groq `whisper-large-v3-turbo`, `language=pt`.
+2. Procura o link normalizado no cache. Achou, devolve na hora, marcado como
+   transcricao anterior e com a data. Custo zero.
+3. Tenta legenda automatica em portugues. Quando existe, pula download,
+   conversao e transcricao de uma vez.
+4. `yt-dlp -f bestaudio`, so a trilha de audio, nunca o video.
+5. `ffmpeg` para opus 16 kbps mono a 16 kHz. Medido em 6,8 a 7,0 MB por hora.
+6. Groq `whisper-large-v3-turbo`, `language=pt`.
+
+## O YouTube
+
+Medido em 2026-09-28 a partir do Render: o YouTube recusa pedido vindo de IP
+de datacenter, com `429` e `403`. A legenda automatica cai junto, porque
+depende da mesma extracao de pagina. Instagram, TikTok e Facebook passaram sem
+cookie e sem proxy.
+
+A decisao foi aceitar a degradacao em vez de comprar proxy residencial: link
+do YouTube responde `YOUTUBE_BLOQUEADO` e as outras tres seguem funcionando.
+Ligar um proxy depois e configuracao, nao reescrita.
 
 ## Onde isso sai do padrao
 
 O padrao de arquitetura destes projetos e hospedagem estatica, sem servidor.
 `yt-dlp` e `ffmpeg` sao binarios e precisam de um processo rodando, entao este
 e o primeiro projeto que exige backend de verdade. A excecao e consciente e
-esta registrada no plano de execucao.
-
-A chave da Groq nunca entra no repositorio. Ela e colada direto no painel do
-Render.
+esta explicada no plano de execucao.

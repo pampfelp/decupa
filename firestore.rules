@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// O backend escreve com credencial de servico e passa por cima destas regras.
+// Elas valem so pro navegador, e o navegador so precisa de uma coisa: ler o
+// andamento do trabalho que ele mesmo acabou de pedir.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /trabalhos/{id} {
+      // Quem tem o id ve aquele trabalho. O id e sorteado pelo Firestore e nao
+      // da pra adivinhar, entao vale como link nao listado.
+      allow get: if true;
+
+      // Ninguem varre a colecao inteira, e ninguem escreve pelo navegador.
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // O cache guarda o texto por link normalizado. Se o navegador pudesse ler,
+    // qualquer um consultaria transcricao de link alheio sem ter o id.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

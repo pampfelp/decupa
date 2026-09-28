@@ -11,10 +11,10 @@ RUN apt-get update \
 # tentado de verdade.
 COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
 
-RUN pip install --no-cache-dir yt-dlp requests
+RUN pip install --no-cache-dir yt-dlp requests firebase-admin
 
 WORKDIR /app
-COPY prova.py .
+COPY servidor.py .
 
 ENV PYTHONUNBUFFERED=1
-CMD ["python", "prova.py"]
+CMD ["python", "servidor.py"]
