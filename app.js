@@ -4,9 +4,9 @@
 // quem manda e o Firestore: o backend escreve o andamento no documento e esta
 // tela escuta por onSnapshot. Por isso nada aqui fica perguntando "ja acabou?".
 
-import { db } from "./firebase-init.js?v=5";
+import { db } from "./firebase-init.js?v=6";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=5";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=6";
 
 // Antes de qualquer await: o evento beforeinstallprompt do Android dispara
 // cedo e, se ninguem estiver escutando, passa e nao volta.
@@ -129,6 +129,7 @@ function concluir(dados) {
   pintar();
 
   ultimo = dados;
+  if (dados.texto) jaTranscrito.set(chaveDoLink(dados.url || ""), dados);
 
   certo.hidden = false;
   certo.classList.remove("rodando");
@@ -247,7 +248,39 @@ function escutar(id) {
 
 // ------------------------------------------------------------------- comecar
 
+// Memoria da aba, e so dela: um Map que morre quando a pagina fecha. Nao usa
+// localStorage nem sessionStorage, entao nada e guardado e a politica de
+// privacidade continua valendo palavra por palavra.
+//
+// Serve pro caso mais comum de desperdicio: a mesma pessoa colar de novo o
+// link que ela acabou de transcrever. Antes isso custava download, banda e
+// cota da Groq de novo; agora custa zero.
+const jaTranscrito = new Map();
+
+function chaveDoLink(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const caminho = u.pathname.replace(/\/+$/, "");
+    if (host === "youtu.be") return "youtube.com/watch?v=" + caminho.replace(/^\//, "");
+    if (host.endsWith("youtube.com") && u.searchParams.get("v")) {
+      return "youtube.com/watch?v=" + u.searchParams.get("v");
+    }
+    return host + caminho;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
 async function comecar(url) {
+  const guardado = jaTranscrito.get(chaveDoLink(url));
+  if (guardado) {
+    fita.hidden = false;
+    zerarFita();
+    concluir(guardado);
+    return;
+  }
+
   botao.disabled = true;
   fita.hidden = false;
   zerarFita();

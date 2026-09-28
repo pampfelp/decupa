@@ -207,8 +207,12 @@ def tentar_legenda(url, pasta):
 
 
 def baixar_audio(url, plataforma, pasta):
+    # A melhor trilha nao serve de nada aqui: tudo vira mono 16 kHz logo em
+    # seguida, e o Whisper nao enxerga diferenca acima de uns 64 kbps. Pegar a
+    # menor que sirva corta banda, tempo de download e trabalho do ffmpeg.
     ok, detalhe = rodar([
-        "yt-dlp", "-f", "bestaudio/best", "--no-playlist", "-o", "audio.%(ext)s", url,
+        "yt-dlp", "-f", "bestaudio[abr<=70]/bestaudio/best", "--no-playlist",
+        "-o", "audio.%(ext)s", url,
     ], pasta)
     achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
     if not ok or not achados:
@@ -216,10 +220,35 @@ def baixar_audio(url, plataforma, pasta):
     return achados[0]
 
 
+# A Groq cobra por segundo de audio, entao segundo que nao tem fala e dinheiro
+# jogado fora. Em reel isso e quase zero e nao compensa o risco de cortar o
+# comeco de uma palavra, entao so entra em audio longo, onde a conta pesa.
+DURACAO_PARA_CORTAR_SILENCIO = 300  # 5 minutos
+
+
+def duracao_de(caminho):
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", caminho],
+        capture_output=True, text=True, timeout=60)
+    try:
+        return float(p.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
 def comprimir(entrada, pasta):
     saida = os.path.join(pasta, "audio.ogg")
+
+    filtros = []
+    if duracao_de(entrada) > DURACAO_PARA_CORTAR_SILENCIO:
+        # Corta so o silencio que passa de um segundo, e guarda um segundo
+        # dele. Pausa curta de fala continua inteira, que e o que o Whisper
+        # usa pra pontuar.
+        filtros = ["-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-45dB"]
+
     ok, detalhe = rodar([
-        "ffmpeg", "-y", "-i", entrada, "-vn",
+        "ffmpeg", "-y", "-i", entrada, "-vn", *filtros,
         "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "16k", saida,
     ], pasta)
     if not ok or not os.path.exists(saida):
@@ -300,11 +329,11 @@ class Motor:
         pra quem fechou a aba antes disso: nada pode sobreviver a janela de
         leitura, porque a promessa e que a transcricao nao fica guardada.
 
-        A cada 10 minutos, e nao a cada 2 segundos: varredura apertada gastaria
+        A cada 30 minutos, e nao a cada 2 segundos: varredura apertada gastaria
         a cota gratuita do Firestore o dia inteiro pra achar nada (gatilho E1).
         """
         while True:
-            time.sleep(600)
+            time.sleep(1800)
             try:
                 self._varrer()
             except Exception as e:
