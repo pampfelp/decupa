@@ -36,11 +36,14 @@ LIMITE_CORPO = 4096
 
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
-# 25 por conexao por dia. O que limita de verdade e a cota da Groq, 8 horas de
-# audio por dia, que dao umas 320 transcricoes de reel: com 25, precisa de uma
-# duzia de pessoas usando pesado no mesmo dia pra acabar. Numero escolhido por
-# ele em 28/09, subindo dos 5 que o plano previa.
-LIMITE_DIA = 25
+# Zero significa sem teto. Decisao dele em 28/09, revogando os 5 do plano.
+#
+# Com o teto desligado nada de IP e lido nem guardado, e a unica protecao que
+# sobra e o Turnstile: bom contra robo, nenhum contra gente. Quem descobrir o
+# endereco pode consumir as 8 horas de audio que a Groq da por dia.
+#
+# O mecanismo fica escrito e testado. Voltar a ligar e trocar este numero.
+LIMITE_DIA = 0
 
 # Transcricao que falhou nao e transcricao. Cobrar por ela faz a pessoa pagar
 # por defeito nosso, que foi exatamente o que aconteceu em 28/09: dois bugs
@@ -141,12 +144,14 @@ def balde_de(db, chave):
 
 
 def devolver_ao_teto(db, chave, codigo):
-    if not chave or codigo in SEM_DEVOLUCAO:
+    if LIMITE_DIA <= 0 or not chave or codigo in SEM_DEVOLUCAO:
         return
     balde_de(db, chave).set({"contagem": firestore.Increment(-1)}, merge=True)
 
 
 def cobrar_do_teto(db, ip):
+    if LIMITE_DIA <= 0:
+        return
     hoje = time.strftime("%Y-%m-%d")
     ref = db.collection(LIMITES).document(hoje + "_" + chave_ip(ip))
     doc = ref.get()
@@ -475,7 +480,7 @@ def criar_trabalho(db, motor, url, ip, token):
         "url": url,
         "urlNormalizada": normalizada,
         "plataforma": plataforma,
-        "chaveIp": chave_ip(ip),
+        "chaveIp": chave_ip(ip) if LIMITE_DIA > 0 else None,
         "criadoEm": firestore.SERVER_TIMESTAMP,
         "atualizadoEm": firestore.SERVER_TIMESTAMP,
     }
@@ -515,7 +520,7 @@ class Handler(BaseHTTPRequestHandler):
             # publicar versao nova do site.
             self.json(200, {
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
-                "limiteDia": LIMITE_DIA,
+                "limiteDia": LIMITE_DIA or None,
             })
             return
         if caminho.startswith("/trabalho/"):
