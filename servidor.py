@@ -235,12 +235,12 @@ class Motor:
             self._andar(trabalho_id, "baixando")
             inicio = time.monotonic()
 
-            texto = tentar_legenda(url, pasta)
-            if texto:
-                self._concluir(trabalho_id, dados, texto, "legenda automatica",
-                               {"segundosTotal": round(time.monotonic() - inicio, 1)})
-                return
             if plataforma == "youtube":
+                texto = tentar_legenda(url, pasta)
+                if texto:
+                    self._concluir(trabalho_id, dados, texto, "legenda automatica",
+                                   {"segundosTotal": round(time.monotonic() - inicio, 1)})
+                    return
                 # Medido em 2026-09-28: o YouTube recusa IP de datacenter. Sem
                 # legenda nao ha caminho, e tentar o download so gasta tempo.
                 raise Falha("YOUTUBE_BLOQUEADO",

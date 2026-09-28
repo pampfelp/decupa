@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .env
+
+# Chave de conta de servico nunca entra no repositorio, e este repositorio e
+# publico. O lugar dela e a variavel de ambiente do Render.
+*firebase-adminsdk*.json
