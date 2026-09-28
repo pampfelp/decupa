@@ -86,11 +86,22 @@ def chave_cache(url_normalizada):
 # ------------------------------------------------------------------- o teto
 
 def ip_de(handler):
-    """Atras do proxy do Render, o IP de quem pediu vem no X-Forwarded-For;
-    o primeiro da lista e o cliente, o resto sao os proxies do caminho."""
+    """O ULTIMO valor do X-Forwarded-For, nunca o primeiro.
+
+    O proxy do Render acrescenta no fim da lista o IP de quem abriu a conexao
+    com ele. Tudo que vem antes disso foi escrito por quem pediu, e portanto e
+    inventavel. Ler o primeiro valor deixava o teto diario ser burlado com um
+    cabecalho de uma linha: testado em 28/09, IP esgotado em 5 de 5 voltou a
+    ser aceito so mandando X-Forwarded-For: 203.0.113.7.
+
+    Se um dia entrar outro proxy na frente do Render (Cloudflare, por exemplo),
+    este calculo muda: o confiavel passa a ser o penultimo.
+    """
     encaminhado = handler.headers.get("X-Forwarded-For", "")
     if encaminhado:
-        return encaminhado.split(",")[0].strip()
+        partes = [p.strip() for p in encaminhado.split(",") if p.strip()]
+        if partes:
+            return partes[-1]
     return handler.client_address[0]
 
 
