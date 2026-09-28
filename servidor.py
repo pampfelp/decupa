@@ -38,6 +38,15 @@ LIMITE_CORPO = 4096
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
 LIMITE_DIA = 5
 
+# Transcricao que falhou nao e transcricao. Cobrar por ela faz a pessoa pagar
+# por defeito nosso, que foi exatamente o que aconteceu em 28/09: dois bugs
+# meus consumiram duas das cinco do dia dele sem entregar nada.
+#
+# As duas excecoes sao onde o download chegou a acontecer de verdade. Devolver
+# tambem nesses casos abriria a porta pra alguem gastar banda a vontade
+# mandando link quebrado em laco, sem nunca tocar no teto.
+SEM_DEVOLUCAO = ("DOWNLOAD_FALHOU", "INSTAGRAM_BLOQUEADO")
+
 # Nao ha limite de duracao. Decisao dele em 28/09, depois de um reel de 2
 # minutos ser recusado por um filtro meu escrito errado. O unico teto que
 # sobra e fisico: a Groq recusa arquivo acima de 25 MB na camada gratuita,
@@ -121,6 +130,16 @@ def chave_ip(ip):
     """Guarda o resumo, nunca o endereco. O teto so precisa saber se e a mesma
     pessoa de antes, e nao precisa saber quem ela e."""
     return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:32]
+
+
+def balde_de(db, chave):
+    return db.collection(LIMITES).document(time.strftime("%Y-%m-%d") + "_" + chave)
+
+
+def devolver_ao_teto(db, chave, codigo):
+    if not chave or codigo in SEM_DEVOLUCAO:
+        return
+    balde_de(db, chave).set({"contagem": firestore.Increment(-1)}, merge=True)
 
 
 def cobrar_do_teto(db, ip):
@@ -382,6 +401,12 @@ class Motor:
     def _marcar_erro(self, trabalho_id, codigo, detalhe):
         print("trabalho %s falhou: %s" % (trabalho_id, codigo), flush=True)
         self._andar(trabalho_id, "erro", {"codigo": codigo, "detalhe": detalhe[:1500]})
+        try:
+            doc = self.db.collection(TRABALHOS).document(trabalho_id).get()
+            if doc.exists:
+                devolver_ao_teto(self.db, (doc.to_dict() or {}).get("chaveIp"), codigo)
+        except Exception as e:
+            print("nao deu pra devolver ao teto: %r" % e, flush=True)
 
     def _executar(self, trabalho_id):
         ref = self.db.collection(TRABALHOS).document(trabalho_id)
@@ -446,6 +471,7 @@ def criar_trabalho(db, motor, url, ip, token):
         "url": url,
         "urlNormalizada": normalizada,
         "plataforma": plataforma,
+        "chaveIp": chave_ip(ip),
         "criadoEm": firestore.SERVER_TIMESTAMP,
         "atualizadoEm": firestore.SERVER_TIMESTAMP,
     }

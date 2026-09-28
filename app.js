@@ -4,9 +4,9 @@
 // quem manda e o Firestore: o backend escreve o andamento no documento e esta
 // tela escuta por onSnapshot. Por isso nada aqui fica perguntando "ja acabou?".
 
-import { db } from "./firebase-init.js?v=7";
+import { db } from "./firebase-init.js?v=8";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=7";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=8";
 
 // Antes de qualquer await: o evento beforeinstallprompt do Android dispara
 // cedo e, se ninguem estiver escutando, passa e nao volta.
@@ -34,7 +34,7 @@ const FRASES = {
   TRABALHO_NAO_ENCONTRADO: "Esse trabalho não existe mais.",
   FALHA_INESPERADA: "Alguma coisa quebrou no meio do caminho. Vale tentar de novo.",
   SEM_RESPOSTA: "Não consegui falar com o servidor. Ele pode estar acordando: espere uns 50 segundos e tente de novo.",
-  LIMITE_DIARIO_ATINGIDO: "Você já usou as transcrições de hoje. O limite volta amanhã. Link que já foi transcrito antes continua liberado, porque não custa nada.",
+  LIMITE_DIARIO_ATINGIDO: "Você já usou as cinco transcrições de hoje. O limite volta amanhã. Transcrição que falha não conta: só entra na conta o que chegou até você.",
   SEM_AUDIO: "Esse vídeo não tem faixa de áudio, então não há o que transcrever.",
   AUDIO_GRANDE_DEMAIS: "Esse vídeo é longo demais para o motor de transcrição, que aceita até cerca de três horas e meia de áudio.",
   DESAFIO_FALTANDO: "A verificação de que você não é um robô não carregou. Atualize a página.",
