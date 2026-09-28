@@ -4,9 +4,9 @@
 // quem manda e o Firestore: o backend escreve o andamento no documento e esta
 // tela escuta por onSnapshot. Por isso nada aqui fica perguntando "ja acabou?".
 
-import { db } from "./firebase-init.js?v=1";
+import { db } from "./firebase-init.js?v=2";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=1";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=2";
 
 // Antes de qualquer await: o evento beforeinstallprompt do Android dispara
 // cedo e, se ninguem estiver escutando, passa e nao volta.
@@ -187,14 +187,6 @@ function guardarNaLeitura(dados) {
     p.textContent = resto;
     $("corpo").appendChild(p);
   }
-
-  const cache = $("marca-cache");
-  if (dados.veioDoCache && dados.transcritoEm) {
-    cache.textContent = "Já transcrito antes, em " + formatarData(dados.transcritoEm);
-    cache.hidden = false;
-  } else {
-    cache.hidden = true;
-  }
 }
 
 // Corta a abertura do resto. Transcricao automatica costuma vir com pouca
@@ -218,10 +210,11 @@ function partir(texto) {
   return [texto.slice(0, corte).trim(), texto.slice(corte).trim()];
 }
 
-function formatarData(valor) {
-  const d = valor && valor.toDate ? valor.toDate() : new Date(valor);
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" }) +
-         " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+// O servidor esquece o texto assim que a tela o recebe. A partir daqui a
+// unica copia e a do navegador de quem pediu, e e por isso que a pagina avisa
+// que fechar sem copiar perde a transcricao.
+function esquecer(id) {
+  fetch(BACKEND + "/trabalho/" + id, { method: "DELETE" }).catch(() => {});
 }
 
 // ------------------------------------------------------------------ escutar
@@ -240,6 +233,7 @@ function escutar(id) {
     }
     if (dados.estado === "pronto") {
       concluir(dados);
+      esquecer(id);
       botao.disabled = false;
       desescutar();
       desescutar = null;

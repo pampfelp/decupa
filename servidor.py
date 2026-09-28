@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -30,7 +31,6 @@ GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 TURNSTILE_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 MODELO = "whisper-large-v3-turbo"
 TRABALHOS = "trabalhos"
-CACHE = "cache"
 LIMITES = "limites"
 LIMITE_CORPO = 4096
 
@@ -38,6 +38,10 @@ LIMITE_CORPO = 4096
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
 LIMITE_DIA = 5
 DURACAO_MAX = 600  # 10 minutos
+
+# A transcricao nao fica guardada. A tela apaga o trabalho assim que recebe o
+# texto; esta janela e so o teto pra quem fechou a aba antes disso.
+JANELA_LEITURA = 30  # minutos
 
 PLATAFORMAS = {
     "instagram.com": "instagram",
@@ -77,10 +81,6 @@ def normalizar(url):
         if v:
             return "youtube.com/watch?v=" + v
     return host + caminho
-
-
-def chave_cache(url_normalizada):
-    return hashlib.sha1(url_normalizada.encode("utf-8")).hexdigest()
 
 
 # ------------------------------------------------------------------- o teto
@@ -247,6 +247,7 @@ class Motor:
         self.fila = queue.Queue()
         threading.Thread(target=self._laco, daemon=True).start()
         threading.Thread(target=self._resgatar, daemon=True).start()
+        threading.Thread(target=self._varrer_sempre, daemon=True).start()
 
     def enfileirar(self, trabalho_id):
         self.fila.put(trabalho_id)
@@ -280,6 +281,43 @@ class Motor:
                 self.enfileirar(doc.id)
         except Exception as e:
             print("nao deu pra resgatar trabalhos presos: %r" % e, flush=True)
+
+    def _varrer_sempre(self):
+        """A tela apaga o trabalho assim que recebe o texto. Esta varredura e
+        pra quem fechou a aba antes disso: nada pode sobreviver a janela de
+        leitura, porque a promessa e que a transcricao nao fica guardada.
+
+        A cada 10 minutos, e nao a cada 2 segundos: varredura apertada gastaria
+        a cota gratuita do Firestore o dia inteiro pra achar nada (gatilho E1).
+        """
+        while True:
+            time.sleep(600)
+            try:
+                self._varrer()
+            except Exception as e:
+                print("varredura falhou: %r" % e, flush=True)
+
+    def _varrer(self):
+        limite = datetime.now(timezone.utc) - timedelta(minutes=JANELA_LEITURA)
+        velhos = self.db.collection(TRABALHOS).where(
+            filter=firestore.FieldFilter("criadoEm", "<", limite)
+        ).limit(300).stream()
+        apagados = 0
+        for doc in velhos:
+            doc.reference.delete()
+            apagados += 1
+
+        # A contagem por conexao vale um dia. Guardar ontem nao serve pra nada
+        # e a politica de privacidade promete que ela some sozinha.
+        ontem = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+        for doc in self.db.collection(LIMITES).where(
+            filter=firestore.FieldFilter("dia", "<", ontem)
+        ).limit(300).stream():
+            doc.reference.delete()
+            apagados += 1
+
+        if apagados:
+            print("varredura apagou %d documentos" % apagados, flush=True)
 
     def _andar(self, trabalho_id, estado, extra=None):
         campos = {"estado": estado, "atualizadoEm": firestore.SERVER_TIMESTAMP}
@@ -338,14 +376,6 @@ class Motor:
         campos = {"texto": texto, "fonte": fonte}
         campos.update(tempos)
         self._andar(trabalho_id, "pronto", campos)
-        self.db.collection(CACHE).document(chave_cache(dados["urlNormalizada"])).set({
-            "urlNormalizada": dados["urlNormalizada"],
-            "plataforma": dados["plataforma"],
-            "texto": texto,
-            "fonte": fonte,
-            "duracaoAudio": tempos.get("duracaoAudio"),
-            "criadoEm": firestore.SERVER_TIMESTAMP,
-        })
         print("trabalho %s pronto, %d caracteres" % (trabalho_id, len(texto)), flush=True)
 
 
@@ -365,30 +395,10 @@ def criar_trabalho(db, motor, url, ip, token):
         "atualizadoEm": firestore.SERVER_TIMESTAMP,
     }
 
-    # Link ja transcrito volta na hora e nao gasta banda, cota nem paciencia.
-    # A marcacao de que veio de antes, e de quando, fica no proprio documento,
-    # pra tela conseguir dizer isso em vez de fingir que transcreveu agora.
-    guardado = db.collection(CACHE).document(chave_cache(normalizada)).get()
-    if guardado.exists:
-        antigo = guardado.to_dict()
-        campos.update({
-            "estado": "pronto",
-            "texto": antigo.get("texto", ""),
-            "fonte": antigo.get("fonte"),
-            "duracaoAudio": antigo.get("duracaoAudio"),
-            "veioDoCache": True,
-            "transcritoEm": antigo.get("criadoEm"),
-        })
-        ref = db.collection(TRABALHOS).document()
-        ref.set(campos)
-        return ref.id, "pronto"
-
-    # So o que vai custar trabalho de verdade passa pelo desafio e pelo teto.
     conferir_turnstile(token)
     cobrar_do_teto(db, ip)
 
     campos["estado"] = "na fila"
-    campos["veioDoCache"] = False
     ref = db.collection(TRABALHOS).document()
     ref.set(campos)
     motor.enfileirar(ref.id)
@@ -399,7 +409,9 @@ AJUDA = (
     "Decupa, backend da Fase 2.\n\n"
     "POST /transcrever    corpo JSON com url, devolve o id do trabalho\n"
     "GET  /trabalho/<id>  estado e resultado daquele trabalho\n"
-    "GET  /config         o que a tela precisa saber antes de pedir\n\n"
+    "GET  /config         o que a tela precisa saber antes de pedir\n"
+    "DEL  /trabalho/<id>  apaga o trabalho; a tela chama ao receber o texto\n\n"
+    "A transcricao nao fica guardada. Sem cache e sem historico.\n"
     "Instagram, TikTok e Facebook. YouTube recusa pedido vindo de nuvem.\n"
 )
 
@@ -433,6 +445,23 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, dados)
             return
         self.responder(200, AJUDA)
+
+    def do_DELETE(self):
+        """A tela chama isto assim que recebe o texto. E o "ao fim do uso ela
+        ja some": o servidor esquece, e a copia que sobra e a do navegador de
+        quem pediu. Nao exige prova de dono porque o id sorteado ja e a prova,
+        e o pior caso de apagar um id alheio e o dono perder o proprio texto,
+        que e o mesmo destino que ele teria em 30 minutos."""
+        caminho = urlparse(self.path).path
+        if not caminho.startswith("/trabalho/"):
+            self.json(404, {"codigo": "ROTA_NAO_ENCONTRADA"})
+            return
+        trabalho_id = caminho[len("/trabalho/"):]
+        if "/" in trabalho_id or not trabalho_id:
+            self.json(400, {"codigo": "ID_INVALIDO"})
+            return
+        self.server.db.collection(TRABALHOS).document(trabalho_id).delete()
+        self.json(200, {"apagado": True})
 
     def do_POST(self):
         if urlparse(self.path).path != "/transcrever":
@@ -474,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
         # diferentes. Sem isto, a Fase 3 nao consegue falar com a Fase 2.
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.end_headers()
         if dados:
             self.wfile.write(dados)

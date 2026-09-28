@@ -7,7 +7,7 @@
 <meta name="description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
 <meta name="theme-color" content="#0C4A45">
 
-<link rel="manifest" href="./manifest.json?v=1">
+<link rel="manifest" href="./manifest.json?v=2">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <!-- iOS: sem estas tags o app abre dentro do Safari, com barra de endereço -->
@@ -29,7 +29,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700&family=IBM+Plex+Mono:wght@400;500&family=Spectral:wght@300;400;600&display=swap">
 
-<link rel="stylesheet" href="./style.css?v=1">
+<link rel="stylesheet" href="./style.css?v=2">
 </head>
 <body>
 
@@ -127,9 +127,17 @@
       <div class="corpo" id="corpo">
         <p>Por trás de cada vídeo existe uma história, uma ideia, uma conversa que merece ser bem registrada. A decupagem é o que conecta o que foi dito ao que vai ser lido, pesquisado, organizado e compartilhado. É o vídeo ganhando uma segunda vida, em palavras.</p>
       </div>
-      <p class="marca-cache" id="marca-cache" hidden></p>
     </div>
   </section>
+
+  <footer class="rodape">
+    <span>A transcrição não é guardada. O servidor esquece assim que ela chega até você.</span>
+    <nav>
+      <a href="./termos.html">Termos de uso</a>
+      <a href="./privacidade.html">Privacidade</a>
+      <a href="https://github.com/pampfelp/decupa">Código</a>
+    </nav>
+  </footer>
 
 </div>
 
@@ -152,9 +160,10 @@
       <button id="baixar" type="button">Baixar .txt</button>
       <button id="fechar" type="button">Fechar</button>
     </div>
+    <p class="aviso">Esta transcrição não fica guardada em lugar nenhum. Ao sair da página, ela some.</p>
   </div>
 </div>
 
-<script type="module" src="./app.js?v=1"></script>
+<script type="module" src="./app.js?v=2"></script>
 </body>
 </html>
