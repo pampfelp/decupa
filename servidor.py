@@ -234,6 +234,22 @@ def tentar_legenda(url, pasta):
     return texto_do_vtt(achados[0]) or None
 
 
+def escolher_com_audio(candidatos):
+    """Quando nao existe trilha de audio pronta, o yt-dlp baixa video e audio
+    separados e junta depois, deixando varios arquivos na pasta: um so com
+    video, um so com audio, e o resultado. Pegar o primeiro da lista pega o
+    que a ordem alfabetica quiser, e em 28/09 pegou o pedaco sem audio.
+
+    Entao a escolha e por conteudo, nao por nome. Entre os que tem audio, o
+    menor: se a trilha ficou separada, ela pesa menos que o arquivo com video
+    junto, e converter ela custa menos.
+    """
+    com_audio = [c for c in candidatos if tem_audio(c)]
+    if not com_audio:
+        return None
+    return min(com_audio, key=os.path.getsize)
+
+
 def baixar_audio(url, plataforma, pasta):
     # A melhor trilha nao serve de nada aqui: tudo vira mono 16 kHz logo em
     # seguida, e o Whisper nao enxerga diferenca acima de uns 64 kbps. Pegar a
@@ -245,7 +261,12 @@ def baixar_audio(url, plataforma, pasta):
     achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
     if not ok or not achados:
         raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
-    return achados[0]
+
+    escolhido = escolher_com_audio(achados)
+    if not escolhido:
+        raise Falha("SEM_AUDIO", "nenhum dos %d arquivos baixados tem faixa de audio" % len(achados))
+    print("baixados %d arquivos, escolhido %s" % (len(achados), os.path.basename(escolhido)), flush=True)
+    return escolhido
 
 
 # A Groq cobra por segundo de audio, entao segundo que nao tem fala e dinheiro
