@@ -86,22 +86,29 @@ def normalizar(url):
 # ------------------------------------------------------------------- o teto
 
 def ip_de(handler):
-    """O ULTIMO valor do X-Forwarded-For, nunca o primeiro.
+    """CF-Connecting-IP, e nao X-Forwarded-For.
 
-    O proxy do Render acrescenta no fim da lista o IP de quem abriu a conexao
-    com ele. Tudo que vem antes disso foi escrito por quem pediu, e portanto e
-    inventavel. Ler o primeiro valor deixava o teto diario ser burlado com um
-    cabecalho de uma linha: testado em 28/09, IP esgotado em 5 de 5 voltou a
-    ser aceito so mandando X-Forwarded-For: 203.0.113.7.
+    Medido no servico no ar em 28/09, porque eu tinha errado duas vezes
+    supondo. O Render fica atras da Cloudflare, e o que chega aqui e:
 
-    Se um dia entrar outro proxy na frente do Render (Cloudflare, por exemplo),
-    este calculo muda: o confiavel passa a ser o penultimo.
+        sem forjar     XFF: 177.55.67.61, 104.23.254.80, 10.27.119.248
+        forjando XFF   XFF: 198.51.100.77, 177.55.67.61, 172.71.238.190, ...
+
+    O valor inventado entra NA FRENTE e o IP real fica no meio da fila, entao
+    nem o primeiro nem o ultimo do X-Forwarded-For servem. O CF-Connecting-IP
+    ficou 177.55.67.61 nos dois casos, e tentar forjar ELE faz a propria
+    Cloudflare recusar o pedido com "error code: 1000" antes de chegar aqui.
+
+    Sem CF-Connecting-IP, cai pro endereco da conexao, que atras deste proxy e
+    sempre 127.0.0.1: o teto vira um so pra todo mundo. E restritivo demais de
+    proposito. Se a Cloudflare sumir da frente, e melhor o teto apertar e
+    aparecer no log do que abrir em silencio.
     """
-    encaminhado = handler.headers.get("X-Forwarded-For", "")
-    if encaminhado:
-        partes = [p.strip() for p in encaminhado.split(",") if p.strip()]
-        if partes:
-            return partes[-1]
+    for cabecalho in ("CF-Connecting-IP", "True-Client-IP"):
+        valor = (handler.headers.get(cabecalho) or "").strip()
+        if valor:
+            return valor
+    print("sem CF-Connecting-IP: o teto vai contar todo mundo junto", flush=True)
     return handler.client_address[0]
 
 
@@ -424,18 +431,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         caminho = urlparse(self.path).path
-        if caminho == "/diagnostico":
-            # TEMPORARIO. Existe so pra descobrir qual cabecalho traz o IP de
-            # verdade atras do proxy do Render, em vez de eu supor de novo.
-            # Sai assim que a resposta aparecer.
-            interessantes = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip",
-                             "x-real-ip", "x-client-ip", "forwarded", "cf-ray")
-            self.json(200, {
-                "cabecalhos": {k: v for k, v in self.headers.items()
-                               if k.lower() in interessantes},
-                "conexao": self.client_address[0],
-            })
-            return
         if caminho == "/config":
             # A tela pergunta se o desafio esta ligado em vez de trazer a chave
             # escrita no codigo. Assim ligar o Turnstile e mexer no Render, nao
