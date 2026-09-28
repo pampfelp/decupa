@@ -262,6 +262,10 @@ body {
   color: var(--ink);
 }
 .recado[hidden] { display: none; }
+/* Esperar nao e falhar: enquanto o servidor acorda, o aviso e do tom do
+   projeto, e nao da cor de erro. */
+.recado.esperando { border-left-color: var(--accent); }
+
 .recado .codigo {
   display: block;
   font-family: var(--mono);

@@ -4,9 +4,9 @@
 // quem manda e o Firestore: o backend escreve o andamento no documento e esta
 // tela escuta por onSnapshot. Por isso nada aqui fica perguntando "ja acabou?".
 
-import { db } from "./firebase-init.js?v=2";
+import { db } from "./firebase-init.js?v=3";
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=2";
+import { iniciarBannerInstalacao } from "./pwa-instalacao.js?v=3";
 
 // Antes de qualquer await: o evento beforeinstallprompt do Android dispara
 // cedo e, se ninguem estiver escutando, passa e nao volta.
@@ -113,6 +113,7 @@ function zerarFita() {
 
 function mostrarErro(codigo, detalhe) {
   clearInterval(relogio);
+  recado.classList.remove("esperando");
   $("recado-frase").textContent = FRASES[codigo] || FRASES.FALHA_INESPERADA;
   $("recado-codigo").textContent = detalhe ? codigo + " · " + detalhe : codigo;
   recado.hidden = false;
@@ -256,15 +257,12 @@ async function comecar(url) {
 
   let resposta;
   try {
-    resposta = await fetch(BACKEND + "/transcrever", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, desafio: desafio.token || "" })
-    });
+    resposta = await pedirComPaciencia(url);
   } catch {
     mostrarErro("SEM_RESPOSTA", "");
     return;
   }
+  esconderAviso();
 
   const corpo = await resposta.json().catch(() => ({}));
   if (!resposta.ok) {
@@ -274,6 +272,49 @@ async function comecar(url) {
   }
   renovarDesafio();
   escutar(corpo.id);
+}
+
+// ------------------------------------------------- esperar o servidor acordar
+
+// O Render grátis derruba a instância depois de 15 minutos parada, e acordar
+// leva até uns 50 segundos. Enquanto ela sobe, o próprio Render responde uma
+// página de erro que não traz cabeçalho de CORS, e aí o fetch nem chega a ser
+// lido: estoura antes. O plano já sabia desse sono; o que faltava era a tela
+// esperar em vez de mandar a pessoa tentar de novo.
+const ESPERAS = [0, 4000, 8000, 12000, 20000, 25000];   // ~70s no total
+
+function mostrarAviso(frase) {
+  $("recado-frase").textContent = frase;
+  $("recado-codigo").textContent = "";
+  recado.classList.add("esperando");
+  recado.hidden = false;
+}
+
+function esconderAviso() {
+  recado.classList.remove("esperando");
+  recado.hidden = true;
+}
+
+async function pedirComPaciencia(url) {
+  let ultimoErro;
+  for (let i = 0; i < ESPERAS.length; i++) {
+    if (ESPERAS[i]) await new Promise((r) => setTimeout(r, ESPERAS[i]));
+    try {
+      const r = await fetch(BACKEND + "/transcrever", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, desafio: desafio.token || "" })
+      });
+      // 502 e 503 são o Render dizendo que a instância ainda está subindo.
+      // Qualquer outro código é resposta de verdade e não se repete.
+      if (r.status !== 502 && r.status !== 503) return r;
+      ultimoErro = new Error("instância subindo");
+    } catch (e) {
+      ultimoErro = e;
+    }
+    if (i === 0) mostrarAviso("Acordando o servidor. Ele dorme quando fica um tempo sem uso, e a primeira transcrição depois disso leva até um minuto.");
+  }
+  throw ultimoErro;
 }
 
 // ------------------------------------------------------------------ desafio
@@ -288,11 +329,17 @@ function renovarDesafio() {
 
 async function ligarDesafio() {
   let config;
-  try {
-    config = await (await fetch(BACKEND + "/config")).json();
-  } catch {
-    return;  // servidor dormindo: o teto por IP segura, e o POST avisa depois
+  for (const espera of [0, 6000]) {
+    if (espera) await new Promise((r) => setTimeout(r, espera));
+    try {
+      config = await (await fetch(BACKEND + "/config")).json();
+      break;
+    } catch {
+      // Servidor dormindo. Esta chamada ja serve de cutucao pra ele acordar,
+      // entao a segunda tentativa costuma pegar ele de pe.
+    }
   }
+  if (!config) return;
   if (!config.turnstile) return;
 
   desafio.sitekey = config.turnstile;
