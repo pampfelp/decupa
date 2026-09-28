@@ -37,7 +37,12 @@ LIMITE_CORPO = 4096
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
 LIMITE_DIA = 5
-DURACAO_MAX = 600  # 10 minutos
+
+# Nao ha limite de duracao. Decisao dele em 28/09, depois de um reel de 2
+# minutos ser recusado por um filtro meu escrito errado. O unico teto que
+# sobra e fisico: a Groq recusa arquivo acima de 25 MB na camada gratuita,
+# o que em opus 16 kbps da cerca de tres horas e meia de audio.
+LIMITE_GROQ_BYTES = 24 * 1024 * 1024
 
 # A transcricao nao fica guardada. A tela apaga o trabalho assim que recebe o
 # texto; esta janela e so o teto pra quem fechou a aba antes disso.
@@ -202,18 +207,11 @@ def tentar_legenda(url, pasta):
 
 
 def baixar_audio(url, plataforma, pasta):
-    # O filtro de duracao vai no proprio yt-dlp: assim o video longo e recusado
-    # antes de gastar banda, em vez de ser medido depois de baixado. Video sem
-    # duracao declarada passa, porque recusar o desconhecido barraria coisa boa.
     ok, detalhe = rodar([
-        "yt-dlp", "-f", "bestaudio/best", "--no-playlist",
-        "--match-filter", "duration<=%d | !duration" % DURACAO_MAX,
-        "-o", "audio.%(ext)s", url,
+        "yt-dlp", "-f", "bestaudio/best", "--no-playlist", "-o", "audio.%(ext)s", url,
     ], pasta)
     achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
     if not ok or not achados:
-        if "does not pass filter" in detalhe:
-            raise Falha("VIDEO_LONGO_DEMAIS", "o teto e de %d minutos" % (DURACAO_MAX // 60))
         raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
     return achados[0]
 
@@ -226,6 +224,14 @@ def comprimir(entrada, pasta):
     ], pasta)
     if not ok or not os.path.exists(saida):
         raise Falha("CONVERSAO_FALHOU", detalhe)
+
+    # Nao e limite de tempo, e o teto de arquivo da Groq. Sem esta checagem o
+    # video muito longo voltaria como "GROQ_RECUSOU 413", que nao diz nada.
+    peso = os.path.getsize(saida)
+    if peso > LIMITE_GROQ_BYTES:
+        raise Falha("AUDIO_GRANDE_DEMAIS",
+                    "%.1f MB depois de comprimido, e o motor aceita %d MB"
+                    % (peso / 1048576, LIMITE_GROQ_BYTES // 1048576))
     return saida
 
 
@@ -438,7 +444,6 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, {
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
                 "limiteDia": LIMITE_DIA,
-                "duracaoMax": DURACAO_MAX,
             })
             return
         if caminho.startswith("/trabalho/"):
