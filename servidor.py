@@ -211,7 +211,7 @@ def baixar_audio(url, plataforma, pasta):
     # seguida, e o Whisper nao enxerga diferenca acima de uns 64 kbps. Pegar a
     # menor que sirva corta banda, tempo de download e trabalho do ffmpeg.
     ok, detalhe = rodar([
-        "yt-dlp", "-f", "bestaudio[abr<=70]/bestaudio/best", "--no-playlist",
+        "yt-dlp", "-f", "bestaudio[abr<=70]/bestaudio/bestaudio*/best", "--no-playlist",
         "-o", "audio.%(ext)s", url,
     ], pasta)
     achados = [a for a in glob.glob(os.path.join(pasta, "audio.*")) if not a.endswith(".ogg")]
@@ -224,6 +224,16 @@ def baixar_audio(url, plataforma, pasta):
 # jogado fora. Em reel isso e quase zero e nao compensa o risco de cortar o
 # comeco de uma palavra, entao so entra em audio longo, onde a conta pesa.
 DURACAO_PARA_CORTAR_SILENCIO = 300  # 5 minutos
+
+
+def tem_audio(caminho):
+    """Video sem faixa de audio existe, e nesse caso a conversao falha com uma
+    mensagem que culpa o ffmpeg em vez de dizer o que aconteceu."""
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", caminho],
+        capture_output=True, text=True, timeout=60)
+    return "audio" in (p.stdout or "")
 
 
 def duracao_de(caminho):
@@ -239,6 +249,9 @@ def duracao_de(caminho):
 
 def comprimir(entrada, pasta):
     saida = os.path.join(pasta, "audio.ogg")
+
+    if not tem_audio(entrada):
+        raise Falha("SEM_AUDIO", "o arquivo baixado nao tem faixa de audio")
 
     filtros = []
     if duracao_de(entrada) > DURACAO_PARA_CORTAR_SILENCIO:
