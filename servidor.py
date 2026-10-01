@@ -221,7 +221,8 @@ class Falha(Exception):
 def rodar(cmd, pasta):
     p = subprocess.run(cmd, cwd=pasta, capture_output=True, text=True, timeout=600)
     fim = (p.stderr or p.stdout or "").strip().splitlines()
-    return p.returncode == 0, "\n".join(fim[-6:])
+    formato = [linha for linha in (p.stdout or "").splitlines() if "Downloading 1 format(s)" in linha]
+    return p.returncode == 0, "\n".join(formato[-1:] + fim[-5:])
 
 
 def codigo_da_falha(plataforma, detalhe):
@@ -315,7 +316,7 @@ def baixar_audio(url, plataforma, pasta):
     """
     tentativas = [
         ("trilha de audio", "bestaudio*[acodec!=none]/bestaudio"),
-        ("video inteiro", "best/bestvideo*+bestaudio"),
+        ("video inteiro", "bestvideo*+bestaudio/best"),
     ]
 
     detalhe_final = ""

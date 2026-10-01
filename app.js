@@ -34,7 +34,7 @@ const FRASES = {
   TRABALHO_NAO_ENCONTRADO: "Esse trabalho não existe mais.",
   FALHA_INESPERADA: "Alguma coisa quebrou no meio do caminho. Vale tentar de novo.",
   SEM_RESPOSTA: "Não consegui falar com o servidor. Ele pode estar acordando: espere uns 50 segundos e tente de novo.",
-  SEM_AUDIO: "Esse vídeo não tem faixa de áudio, então não há o que transcrever.",
+  SEM_AUDIO: "A plataforma entregou arquivos sem faixa de áudio ao servidor. O vídeo pode ter som no aplicativo, mas o download não trouxe essa trilha.",
   AUDIO_GRANDE_DEMAIS: "Esse vídeo é longo demais para o motor de transcrição, que aceita até cerca de três horas e meia de áudio.",
   DESAFIO_FALTANDO: "A verificação de que você não é um robô não carregou. Atualize a página.",
   DESAFIO_RECUSADO: "A verificação de que você não é um robô não passou. Atualize a página e tente de novo.",
@@ -42,10 +42,8 @@ const FRASES = {
   SESSAO_EXPIRADA: "Sua verificação expirou. Aguarde a nova validação e tente de novo."
 };
 
-// Fica vazio enquanto o Turnstile nao estiver ligado no servidor. Quem decide
-// e o /config, nao esta tela: ligar o desafio e mexer no Render, nao publicar
-// versao nova do site.
-let desafio = { sitekey: null, widget: null, sessao: null, expiraEm: 0, validando: false };
+// A chave publica esta no HTML para o widget aparecer antes do Firebase carregar.
+let desafio = { sitekey: null, sessao: null, expiraEm: 0, validando: false };
 const CHAVE_SESSAO = "decupa_sessao";
 
 const $ = (id) => document.getElementById(id);
@@ -365,25 +363,38 @@ async function pedirComPaciencia(url) {
 function renovarDesafio() {
   desafio.sessao = null;
   desafio.expiraEm = 0;
+  window.decupaTurnstileToken = null;
   try { sessionStorage.removeItem(CHAVE_SESSAO); } catch {}
   botao.disabled = true;
-  if (desafio.widget === null || !window.turnstile) { ligarDesafio(); return; }
-  turnstile.reset(desafio.widget);
+  $("desafio").hidden = false;
+  if (window.turnstile) turnstile.reset();
 }
 
 async function validarDesafio(token) {
-  if (desafio.validando) return;
+  if (desafio.validando || desafio.sessao) return;
   desafio.validando = true;
   try {
-    const resposta = await fetch(BACKEND + "/sessao", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ desafio: token })
-    });
+    let resposta;
+    for (const espera of ESPERAS) {
+      if (espera) await new Promise((r) => setTimeout(r, espera));
+      try {
+        resposta = await fetch(BACKEND + "/sessao", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ desafio: token })
+        });
+        if (resposta.status !== 502 && resposta.status !== 503) break;
+      } catch {}
+      resposta = null;
+      fita.hidden = false;
+      mostrarAviso("Acordando o servidor para concluir a verificação...");
+    }
+    if (!resposta) throw new Error("SEM_RESPOSTA");
     const dados = await resposta.json();
     if (!resposta.ok) throw new Error(dados.codigo || "DESAFIO_RECUSADO");
     desafio.sessao = dados.sessao;
     desafio.expiraEm = dados.expiraEm;
+    window.decupaTurnstileToken = null;
     try { sessionStorage.setItem(CHAVE_SESSAO, JSON.stringify(dados)); } catch {}
     botao.disabled = false;
     esconderAviso();
@@ -397,27 +408,10 @@ async function validarDesafio(token) {
   }
 }
 
-async function ligarDesafio() {
-  let config;
+function ligarDesafio() {
+  const caixa = $("desafio");
+  desafio.sitekey = caixa.dataset.sitekey;
   botao.disabled = true;
-  fita.hidden = false;
-  mostrarAviso("Preparando a verificação de acesso...");
-  for (const espera of ESPERAS) {
-    if (espera) await new Promise((r) => setTimeout(r, espera));
-    try {
-      const resposta = await fetch(BACKEND + "/config", { cache: "no-store" });
-      if (!resposta.ok) continue;
-      config = await resposta.json();
-      break;
-    } catch {
-      // Servidor dormindo. Esta chamada ja serve de cutucao pra ele acordar,
-      // entao a segunda tentativa costuma pegar ele de pe.
-    }
-  }
-  if (!config) { avisarDesafioQuebrado(); return; }
-  if (!config.turnstile) { botao.disabled = false; esconderAviso(); fita.hidden = true; return; }
-
-  desafio.sitekey = config.turnstile;
   try {
     const guardada = JSON.parse(sessionStorage.getItem(CHAVE_SESSAO) || "null");
     if (guardada?.expiraEm > Date.now() / 1000 + 60) {
@@ -426,41 +420,29 @@ async function ligarDesafio() {
       botao.disabled = false;
       esconderAviso();
       fita.hidden = true;
+      caixa.hidden = true;
       return;
     }
   } catch {}
-  await new Promise((pronto) => {
-    const s = document.createElement("script");
-    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-    s.async = true;
-    s.onload = pronto;
-    s.onerror = pronto;
-    document.head.appendChild(s);
-  });
-  if (!window.turnstile) return;
-
-  const caixa = document.getElementById("desafio");
   caixa.hidden = false;
-  desafio.widget = turnstile.render(caixa, {
-    sitekey: desafio.sitekey,
-    size: "flexible",
-    callback: validarDesafio,
-    "error-callback": () => avisarDesafioQuebrado(),
-    "expired-callback": () => { if (!desafio.sessao) renovarDesafio(); },
-    "timeout-callback": () => avisarDesafioQuebrado()
-  });
+  if (window.decupaTurnstileToken) validarDesafio(window.decupaTurnstileToken);
 
   // Se a chave estiver mal configurada, o Turnstile nao monta o desafio e nao
   // dispara evento nenhum: nem sucesso, nem erro. Sem esta checagem a pessoa
   // so descobre depois de colar o link e clicar, e o motivo fica escondido.
-  setTimeout(() => { if (!desafio.sessao && !desafio.validando) avisarDesafioQuebrado(); }, 12000);
+  setTimeout(() => { if (!caixa.querySelector("iframe")) avisarDesafioQuebrado(); }, 12000);
 }
+
+window.addEventListener("decupa-turnstile", (e) => validarDesafio(e.detail));
+window.addEventListener("decupa-turnstile-erro", avisarDesafioQuebrado);
+window.addEventListener("decupa-turnstile-expirou", () => { if (!desafio.sessao) renovarDesafio(); });
 
 function avisarDesafioQuebrado() {
   if (desafio.sessao || recado.classList.contains("quebrado")) return;
   $("recado-frase").textContent =
     "A verificação de que você não é um robô não carregou, e sem ela o servidor recusa o pedido. Atualize a página; se continuar, o problema é de configuração e não seu.";
   $("recado-codigo").textContent = "DESAFIO_NAO_CARREGOU";
+  recado.classList.remove("esperando");
   recado.classList.add("quebrado");
   recado.hidden = false;
   fita.hidden = false;

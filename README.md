@@ -21,7 +21,7 @@ Ficam no painel do Render e nenhuma entra no repositorio.
 ```
 GROQ_API_KEY        a chave de console.groq.com
 FIREBASE_CREDENCIAL o JSON inteiro da conta de servico, numa linha so
-TURNSTILE_SITEKEY   chave publica do widget servido em /config
+TURNSTILE_SITEKEY   chave publica do widget servida em /config
 TURNSTILE_SECRET    segredo usado na validacao e na assinatura da sessao
 ```
 
@@ -42,6 +42,9 @@ pessoa olhando pra tela parada. O documento em `trabalhos` anda sozinho por
 `na fila`, `baixando`, `convertendo`, `transcrevendo`, e para em `pronto` ou
 `erro`. A tela vai acompanhar por `onSnapshot`; o `GET /trabalho/<id>` existe
 pra conferir sem tela.
+
+A chave publica tambem esta no `index.html` para a caixa aparecer antes do
+Render acordar. Ao trocar a sitekey, atualizar o HTML e publicar o site.
 
 ## Erros com codigo, nunca mensagem generica
 

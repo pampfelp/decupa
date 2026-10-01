@@ -30,6 +30,20 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700&family=IBM+Plex+Mono:wght@400&family=Spectral:wght@400&display=swap">
 
 <link rel="stylesheet" href="./style.css?v=10">
+<script>
+  window.decupaTurnstilePronto = function (token) {
+    window.decupaTurnstileToken = token;
+    window.dispatchEvent(new CustomEvent("decupa-turnstile", { detail: token }));
+  };
+  window.decupaTurnstileErro = function () {
+    window.dispatchEvent(new Event("decupa-turnstile-erro"));
+  };
+  window.decupaTurnstileExpirou = function () {
+    window.dispatchEvent(new Event("decupa-turnstile-expirou"));
+  };
+  fetch("https://decupa.onrender.com/config", { cache: "no-store" }).catch(() => {});
+</script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -52,7 +66,7 @@
     </span>
     <input id="campo" type="url" inputmode="url" placeholder="Cole o link do vídeo aqui" aria-label="Link do vídeo">
     <span class="selo" id="selo" aria-live="polite"></span>
-    <button class="comecar" id="botao" type="submit">
+    <button class="comecar" id="botao" type="submit" disabled>
       Começar
       <svg width="26" height="10" viewBox="0 0 26 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M0 5h24"/><path d="M20 1.5 24 5l-4 3.5"/>
@@ -99,8 +113,7 @@
     </span>
   </div>
 
-  <!-- Só aparece quando o Turnstile estiver ligado no servidor. -->
-  <div class="desafio" id="desafio" hidden></div>
+  <div class="desafio cf-turnstile" id="desafio" data-sitekey="0x4AAAAAAFHqw4d0vTewaStl" data-size="flexible" data-callback="decupaTurnstilePronto" data-error-callback="decupaTurnstileErro" data-expired-callback="decupaTurnstileExpirou" data-timeout-callback="decupaTurnstileErro"></div>
 
   <section class="fita" id="fita" hidden>
     <div class="etapas">
@@ -164,6 +177,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=11"></script>
+<script type="module" src="./app.js?v=12"></script>
 </body>
 </html>
