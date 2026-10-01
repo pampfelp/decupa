@@ -10,6 +10,7 @@ Cresceu a partir de prova.py, que era a Fase 1 e ja cumpriu o papel dela.
 """
 
 import glob
+import hmac
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import secrets
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -29,6 +31,7 @@ from firebase_admin import credentials, firestore
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 TURNSTILE_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+SESSAO_SEGUNDOS = 24 * 60 * 60
 MODELO = "whisper-large-v3-turbo"
 TRABALHOS = "trabalhos"
 LIMITES = "limites"
@@ -174,9 +177,36 @@ def conferir_turnstile(token):
         return
     if not token:
         raise Falha("DESAFIO_FALTANDO", "a tela nao mandou o token do Turnstile")
-    r = requests.post(TURNSTILE_URL, data={"secret": segredo, "response": token}, timeout=15)
-    if not (r.ok and r.json().get("success")):
+    try:
+        r = requests.post(TURNSTILE_URL, data={"secret": segredo, "response": token}, timeout=15)
+        aceito = r.ok and r.json().get("success")
+    except (requests.RequestException, ValueError):
+        raise Falha("DESAFIO_INDISPONIVEL", "nao foi possivel consultar o Turnstile")
+    if not aceito:
         raise Falha("DESAFIO_RECUSADO", "o Turnstile nao validou este acesso")
+
+
+def criar_sessao():
+    expira = int(time.time()) + SESSAO_SEGUNDOS
+    corpo = "%d.%s" % (expira, secrets.token_urlsafe(24))
+    segredo = os.environ["TURNSTILE_SECRET"].encode("utf-8")
+    assinatura = hmac.new(segredo, corpo.encode("utf-8"), hashlib.sha256).hexdigest()
+    return corpo + "." + assinatura, expira
+
+
+def conferir_sessao(token):
+    segredo = os.environ.get("TURNSTILE_SECRET")
+    if not segredo:
+        return
+    try:
+        expira, nonce, assinatura = token.split(".")
+        corpo = expira + "." + nonce
+        esperada = hmac.new(segredo.encode("utf-8"), corpo.encode("utf-8"), hashlib.sha256).hexdigest()
+        if int(expira) > time.time() and hmac.compare_digest(assinatura, esperada):
+            return
+    except (ValueError, AttributeError):
+        pass
+    raise Falha("SESSAO_EXPIRADA", "verifique o acesso novamente")
 
 
 # ---------------------------------------------------------------- pipeline
@@ -250,6 +280,30 @@ def escolher_com_audio(candidatos):
     return min(com_audio, key=os.path.getsize)
 
 
+def tem_audio(caminho):
+    """Confere o arquivo recebido, nao o rotulo de formato do yt-dlp."""
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", caminho],
+        capture_output=True, text=True, timeout=60)
+    return "audio" in (p.stdout or "")
+
+
+def duracao_de(caminho):
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", caminho],
+        capture_output=True, text=True, timeout=60)
+    try:
+        return float(p.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+# So audio com mais de cinco minutos passa pelo corte de silencio.
+DURACAO_PARA_CORTAR_SILENCIO = 300
+
+
 def baixar_audio(url, plataforma, pasta):
     """Tenta a trilha de audio; se o que vier nao tiver audio, baixa o video
     inteiro e deixa o ffmpeg tirar o audio dele.
@@ -269,17 +323,22 @@ def baixar_audio(url, plataforma, pasta):
         sala = os.path.join(pasta, nome.split()[0])
         os.makedirs(sala, exist_ok=True)
 
-        _, detalhe = rodar([
-            "yt-dlp", "-f", formato, "--no-playlist", "-o", "audio.%(ext)s", url,
-        ], sala)
+        try:
+            _, detalhe = rodar([
+                "yt-dlp", "-f", formato, "--no-playlist", "-o", "audio.%(ext)s", url,
+            ], sala)
+        except subprocess.TimeoutExpired:
+            raise Falha("DOWNLOAD_FALHOU", "a plataforma nao respondeu ao download em 10 minutos")
         detalhe_final = detalhe or detalhe_final
 
         baixados = [a for a in glob.glob(os.path.join(sala, "audio.*")) if not a.endswith(".ogg")]
 
-        # Nao baixou nada: o problema e de acesso, e trocar de formato nao
-        # resolve. Devolve o erro de verdade em vez de insistir.
+        # Um formato indisponivel pode falhar sem arquivo enquanto o video
+        # completo continua acessivel. Bloqueio de acesso, sim, nao melhora.
         if not baixados:
-            raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
+            if codigo_da_falha(plataforma, detalhe) == "INSTAGRAM_BLOQUEADO" or nome == "video inteiro":
+                raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
+            continue
 
         escolhido = escolher_com_audio(baixados)
         if escolhido:
@@ -487,7 +546,7 @@ class Motor:
 
 # -------------------------------------------------------------------- http
 
-def criar_trabalho(db, motor, url, ip, token):
+def criar_trabalho(db, motor, url, ip, sessao, desafio):
     plataforma = plataforma_de(url)
     if not plataforma:
         raise Falha("PLATAFORMA_NAO_SUPORTADA", url)
@@ -502,7 +561,11 @@ def criar_trabalho(db, motor, url, ip, token):
         "atualizadoEm": firestore.SERVER_TIMESTAMP,
     }
 
-    conferir_turnstile(token)
+    # Paginas antigas ainda no cache mandam o token direto ate receberem o JS novo.
+    if sessao or not desafio:
+        conferir_sessao(sessao)
+    else:
+        conferir_turnstile(desafio)
     cobrar_do_teto(db, ip)
 
     campos["estado"] = "na fila"
@@ -570,7 +633,8 @@ class Handler(BaseHTTPRequestHandler):
         self.json(200, {"apagado": True})
 
     def do_POST(self):
-        if urlparse(self.path).path != "/transcrever":
+        caminho = urlparse(self.path).path
+        if caminho not in ("/transcrever", "/sessao"):
             self.json(404, {"codigo": "ROTA_NAO_ENCONTRADA"})
             return
         tamanho = int(self.headers.get("Content-Length") or 0)
@@ -581,15 +645,28 @@ class Handler(BaseHTTPRequestHandler):
             corpo = json.loads(self.rfile.read(tamanho) or b"{}")
             url = (corpo.get("url") or "").strip()
             token = (corpo.get("desafio") or "").strip()
+            sessao = (corpo.get("sessao") or "").strip()
         except Exception:
             self.json(400, {"codigo": "CORPO_INVALIDO"})
+            return
+        if caminho == "/sessao":
+            if not os.environ.get("TURNSTILE_SECRET"):
+                self.json(404, {"codigo": "DESAFIO_DESLIGADO"})
+                return
+            try:
+                conferir_turnstile(token)
+                credencial, expira = criar_sessao()
+            except Falha as f:
+                self.json(400, {"codigo": f.codigo, "detalhe": f.detalhe})
+                return
+            self.json(200, {"sessao": credencial, "expiraEm": expira})
             return
         if not url:
             self.json(400, {"codigo": "URL_AUSENTE"})
             return
         try:
             trabalho_id, estado = criar_trabalho(
-                self.server.db, self.server.motor, url, ip_de(self), token)
+                self.server.db, self.server.motor, url, ip_de(self), sessao, token)
         except Falha as f:
             codigo = 429 if f.codigo == "LIMITE_DIARIO_ATINGIDO" else 400
             self.json(codigo, {"codigo": f.codigo, "detalhe": f.detalhe})

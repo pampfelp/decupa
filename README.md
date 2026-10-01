@@ -3,8 +3,7 @@
 Cola o link de um video do Instagram, TikTok ou Facebook e recebe a
 transcricao em portugues.
 
-Status: **Fase 2**, o backend. Ainda nao existe tela; o que existe e a fila,
-o pipeline e os codigos de erro. A tela e a Fase 3.
+Status: site publico com tela, backend, PWA e verificacao Turnstile.
 
 ## O que tem no repositorio
 
@@ -17,22 +16,27 @@ o pipeline e os codigos de erro. A tela e a Fase 3.
 
 ## Variaveis de ambiente
 
-As duas ficam no painel do Render e nenhuma entra no repositorio.
+Ficam no painel do Render e nenhuma entra no repositorio.
 
 ```
 GROQ_API_KEY        a chave de console.groq.com
 FIREBASE_CREDENCIAL o JSON inteiro da conta de servico, numa linha so
+TURNSTILE_SITEKEY   chave publica do widget servido em /config
+TURNSTILE_SECRET    segredo usado na validacao e na assinatura da sessao
 ```
 
 ## A API
 
 ```
-POST /transcrever     corpo {"url": "<link do video>"}
+POST /sessao          corpo {"desafio": "<token Turnstile>"}; devolve sessao
+POST /transcrever     corpo {"url": "<link do video>", "sessao": "<sessao>"}
                       devolve {"id": "...", "estado": "na fila"} na hora
 GET  /trabalho/<id>   estado e resultado daquele trabalho
 ```
 
-O `POST` nao espera o trabalho terminar. Download mais transcricao levam de 10
+O Turnstile e validado ao abrir a pagina. A sessao assinada vale por 24 horas
+na mesma aba e e reutilizada nos pedidos seguintes. O `POST /transcrever` nao
+espera o trabalho terminar. Download mais transcricao levam de 10
 a 60 segundos, e requisicao que segura isso estoura timeout de proxy e deixa a
 pessoa olhando pra tela parada. O documento em `trabalhos` anda sozinho por
 `na fila`, `baixando`, `convertendo`, `transcrevendo`, e para em `pronto` ou
@@ -56,8 +60,8 @@ detalhe tecnico.
 ## O caminho que o codigo faz
 
 1. Reconhece a plataforma pelo dominio.
-2. Procura o link normalizado no cache. Achou, devolve na hora, marcado como
-   transcricao anterior e com a data. Custo zero.
+2. Se o mesmo link ja foi transcrito nesta aba, devolve o texto da memoria
+   da pagina. O servidor nao guarda transcricoes concluidas.
 3. Tenta legenda automatica em portugues. Quando existe, pula download,
    conversao e transcricao de uma vez.
 4. `yt-dlp -f bestaudio`, so a trilha de audio, nunca o video.
