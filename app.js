@@ -18,6 +18,8 @@ if ("serviceWorker" in navigator) {
 const BACKEND = "https://decupa.onrender.com";
 const ETAPAS = ["baixando", "convertendo", "transcrevendo", "pronto"];
 const PASSO_MS = 2000;
+const LIMITE_ENVIO_BYTES = 50 * 1024 * 1024;
+const EXTENSOES_AUDIO = /\.(mp3|m4a|wav|ogg|opus|flac|aac|webm|wma|aif|aiff)$/i;
 
 // Cada codigo do backend vira uma frase que diz o que fazer. "Erro ao
 // processar" nao e acionavel; "o Instagram recusou" e.
@@ -26,16 +28,22 @@ const FRASES = {
   INSTAGRAM_BLOQUEADO: "O Instagram recusou esse link agora. Costuma voltar sozinho em alguns minutos.",
   PLATAFORMA_NAO_SUPORTADA: "Esse link não é do Instagram, do TikTok, do YouTube nem do Facebook.",
   DOWNLOAD_FALHOU: "Não deu para baixar esse vídeo. Ele pode ser privado, ter sido removido, ou o link pode estar incompleto.",
-  CONVERSAO_FALHOU: "O vídeo baixou, mas o áudio dele não pôde ser convertido.",
+  CONVERSAO_FALHOU: "O áudio não pôde ser convertido. Confira se o arquivo está completo e pode ser reproduzido.",
   GROQ_RECUSOU: "A transcrição falhou no servidor. Vale tentar de novo.",
   GROQ_SEM_CHAVE: "A transcrição está desligada no servidor.",
-  URL_AUSENTE: "Cole um link antes de começar.",
+  URL_AUSENTE: "Cole um link ou selecione um arquivo de áudio antes de começar.",
+  ARQUIVO_VAZIO: "Esse arquivo está vazio. Selecione um arquivo com áudio.",
+  FORMATO_NAO_SUPORTADO: "Selecione um áudio em MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA ou AIFF.",
+  ENVIO_GRANDE_DEMAIS: "O envio aceita até 50 MB por arquivo. Use uma versão menor ou mais comprimida do áudio.",
+  ENVIO_INTERROMPIDO: "O envio foi interrompido. Confira sua conexão e tente de novo.",
+  ARQUIVO_INDISPONIVEL: "O servidor reiniciou antes de terminar. Selecione o áudio e envie novamente.",
+  ENVIO_INDISPONIVEL: "O servidor ainda não está pronto para receber arquivos. Tente novamente em alguns minutos.",
   CORPO_INVALIDO: "Não entendi esse link.",
   TRABALHO_NAO_ENCONTRADO: "Esse trabalho não existe mais.",
   FALHA_INESPERADA: "Alguma coisa quebrou no meio do caminho. Vale tentar de novo.",
   SEM_RESPOSTA: "Não consegui falar com o servidor. Ele pode estar acordando: espere uns 50 segundos e tente de novo.",
-  SEM_AUDIO: "A plataforma entregou arquivos sem faixa de áudio ao servidor. O vídeo pode ter som no aplicativo, mas o download não trouxe essa trilha.",
-  AUDIO_GRANDE_DEMAIS: "Esse vídeo é longo demais para o motor de transcrição, que aceita até cerca de três horas e meia de áudio.",
+  SEM_AUDIO: "O arquivo recebido pelo servidor não contém uma faixa de áudio legível. Confira se ele pode ser reproduzido; se usou um link, tente enviar o áudio diretamente.",
+  AUDIO_GRANDE_DEMAIS: "O áudio ainda excede o limite do motor depois de comprimido. Divida-o em partes menores.",
   DESAFIO_FALTANDO: "A verificação de que você não é um robô não carregou. Atualize a página.",
   DESAFIO_RECUSADO: "A verificação de que você não é um robô não passou. Atualize a página e tente de novo.",
   DESAFIO_INDISPONIVEL: "A verificação de acesso está indisponível agora. Atualize a página em alguns minutos.",
@@ -51,9 +59,28 @@ const campo = $("campo"), selo = $("selo"), botao = $("botao"), fita = $("fita")
 const cheio = $("cheio"), marcador = $("marcador");
 const caixas = [...document.querySelectorAll(".etapa")];
 const recado = $("recado"), certo = $("certo"), fundoModal = $("fundo-modal");
+const arquivo = $("arquivo"), removerArquivo = $("remover-arquivo");
 
 let etapaAtual = -1, progresso = 0, relogio = null, desescutar = null;
 let ultimo = null;
+let ocupado = false;
+
+function ocupar(valor) {
+  ocupado = valor;
+  campo.disabled = valor;
+  arquivo.disabled = valor;
+  removerArquivo.disabled = valor;
+  botao.disabled = valor || !!(desafio.sitekey && !desafio.sessao);
+}
+
+function atualizarArquivo() {
+  removerArquivo.hidden = !arquivo.files.length;
+  caixas[0].firstElementChild.textContent = arquivo.files.length ? "Enviando" : "Baixando";
+  if (/^(URL_AUSENTE|ARQUIVO_VAZIO|FORMATO_NAO_SUPORTADO|ENVIO_GRANDE_DEMAIS)$/.test($("recado-codigo").textContent)) {
+    zerarFita();
+    fita.hidden = true;
+  }
+}
 
 // ----------------------------------------------------------- a marca digitada
 
@@ -118,7 +145,7 @@ function mostrarErro(codigo, detalhe) {
   $("recado-frase").textContent = FRASES[codigo] || FRASES.FALHA_INESPERADA;
   $("recado-codigo").textContent = detalhe ? codigo + " · " + detalhe : codigo;
   recado.hidden = false;
-  botao.disabled = false;
+  ocupar(false);
 }
 
 // ------------------------------------------------------------ o fim do trabalho
@@ -130,7 +157,7 @@ function concluir(dados) {
   pintar();
 
   ultimo = dados;
-  if (dados.texto) jaTranscrito.set(chaveDoLink(dados.url || ""), dados);
+  if (dados.texto && dados.url) jaTranscrito.set(chaveDoLink(dados.url), dados);
 
   certo.hidden = false;
   certo.classList.remove("rodando");
@@ -142,7 +169,8 @@ function concluir(dados) {
 
 function legenda(dados) {
   const partes = [];
-  if (dados.plataforma) partes.push(dados.plataforma);
+  if (dados.nomeArquivo) partes.push(dados.nomeArquivo);
+  else if (dados.plataforma) partes.push(dados.plataforma);
   if (dados.duracaoAudio) partes.push(Math.round(dados.duracaoAudio) + " s de áudio");
   if (dados.fonte && dados.fonte.startsWith("legenda")) partes.push("legenda automática");
   return partes.join(" · ");
@@ -163,6 +191,9 @@ function fechar() {
   certo.classList.remove("rodando");
 
   campo.value = "";
+  arquivo.value = "";
+  atualizarArquivo();
+  ocupar(false);
   selo.classList.remove("aceso");
   campo.focus();
 
@@ -237,7 +268,6 @@ function escutar(id) {
     if (dados.estado === "pronto") {
       concluir(dados);
       esquecer(id);
-      botao.disabled = false;
       desescutar();
       desescutar = null;
       return;
@@ -273,9 +303,10 @@ function chaveDoLink(url) {
   }
 }
 
-async function comecar(url) {
-  const guardado = jaTranscrito.get(chaveDoLink(url));
+async function comecar(url, audio) {
+  const guardado = !audio && jaTranscrito.get(chaveDoLink(url));
   if (guardado) {
+    ocupar(true);
     fita.hidden = false;
     zerarFita();
     concluir(guardado);
@@ -290,7 +321,7 @@ async function comecar(url) {
     return;
   }
 
-  botao.disabled = true;
+  ocupar(true);
   fita.hidden = false;
   zerarFita();
   irPara(0);
@@ -299,7 +330,7 @@ async function comecar(url) {
 
   let resposta;
   try {
-    resposta = await pedirComPaciencia(url);
+    resposta = audio ? await enviarArquivo(audio) : await pedirComPaciencia(url);
   } catch {
     mostrarErro("SEM_RESPOSTA", "");
     return;
@@ -308,7 +339,7 @@ async function comecar(url) {
 
   const corpo = await resposta.json().catch(() => ({}));
   if (!resposta.ok) {
-    mostrarErro(corpo.codigo || "FALHA_INESPERADA", "");
+    mostrarErro(corpo.codigo || "FALHA_INESPERADA", corpo.detalhe || "");
     if (corpo.codigo === "SESSAO_EXPIRADA") renovarDesafio();
     return;
   }
@@ -341,7 +372,7 @@ async function pedirComPaciencia(url) {
   for (let i = 0; i < ESPERAS.length; i++) {
     if (ESPERAS[i]) await new Promise((r) => setTimeout(r, ESPERAS[i]));
     try {
-      const r = await fetch(BACKEND + "/transcrever", {
+      const r = await fetch(BACKEND + (url === null ? "/config" : "/transcrever"), url === null ? { cache: "no-store" } : {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, sessao: desafio.sessao || "" })
@@ -356,6 +387,27 @@ async function pedirComPaciencia(url) {
     if (i === 0) mostrarAviso("Acordando o servidor. Ele dorme quando fica um tempo sem uso, e a primeira transcrição depois disso leva até um minuto.");
   }
   throw ultimoErro;
+}
+
+async function enviarArquivo(audio) {
+  // Acorda com GET antes do upload. O arquivo e enviado uma unica vez:
+  // repetir um POST sem resposta pode criar duas transcricoes do mesmo audio.
+  const resposta = await pedirComPaciencia(null);
+  if (!resposta.ok) return resposta;
+  const config = await resposta.json();
+  if (!config.limiteEnvioBytes) {
+    return new Response(JSON.stringify({ codigo: "ENVIO_INDISPONIVEL" }), { status: 503 });
+  }
+  mostrarAviso("Enviando o áudio. Aguarde a confirmação antes de sair da página.");
+  return fetch(BACKEND + "/transcrever-arquivo", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Decupa-Nome": encodeURIComponent(audio.name),
+      "X-Decupa-Sessao": desafio.sessao || ""
+    },
+    body: audio
+  });
 }
 
 // ------------------------------------------------------------------ desafio
@@ -452,15 +504,38 @@ function avisarDesafioQuebrado() {
 
 $("forma").addEventListener("submit", (e) => {
   e.preventDefault();
+  if (ocupado) return;
   const url = campo.value.trim();
-  if (!url) { mostrarErro("URL_AUSENTE", ""); fita.hidden = false; return; }
-  comecar(url);
+  const audio = arquivo.files[0];
+  let erro = "";
+  if (audio) {
+    if (!audio.size) erro = "ARQUIVO_VAZIO";
+    else if (audio.size > LIMITE_ENVIO_BYTES) erro = "ENVIO_GRANDE_DEMAIS";
+    else if (!EXTENSOES_AUDIO.test(audio.name)) erro = "FORMATO_NAO_SUPORTADO";
+  } else if (!url) erro = "URL_AUSENTE";
+  if (erro) { mostrarErro(erro, ""); fita.hidden = false; return; }
+  comecar(url, audio);
+});
+
+arquivo.addEventListener("change", () => {
+  if (arquivo.files.length) {
+    campo.value = "";
+    selo.classList.remove("aceso");
+  }
+  atualizarArquivo();
+});
+removerArquivo.addEventListener("click", () => {
+  arquivo.value = "";
+  atualizarArquivo();
+  campo.focus();
 });
 
 // O selo acende dentro do proprio campo, assim que o link e colado, antes de
 // clicar em nada. E uma das tres assinaturas visuais do projeto.
 const NOMES = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube", "youtu.be": "YouTube", facebook: "Facebook", "fb.watch": "Facebook" };
 campo.addEventListener("input", () => {
+  arquivo.value = "";
+  atualizarArquivo();
   const v = campo.value.toLowerCase();
   const chave = Object.keys(NOMES).find((k) => v.includes(k));
   if (chave) selo.textContent = NOMES[chave];

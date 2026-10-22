@@ -23,7 +23,7 @@ import time
 import secrets
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 import requests
 import firebase_admin
@@ -36,6 +36,8 @@ MODELO = "whisper-large-v3-turbo"
 TRABALHOS = "trabalhos"
 LIMITES = "limites"
 LIMITE_CORPO = 4096
+LIMITE_ENVIO_BYTES = 50 * 1024 * 1024
+EXTENSOES_AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac", ".webm", ".wma", ".aif", ".aiff")
 
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
@@ -284,7 +286,7 @@ def escolher_com_audio(candidatos):
 def tem_audio(caminho):
     """Confere o arquivo recebido, nao o rotulo de formato do yt-dlp."""
     p = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
+        ["ffprobe", "-protocol_whitelist", "file,pipe", "-v", "error", "-select_streams", "a",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", caminho],
         capture_output=True, text=True, timeout=60)
     return "audio" in (p.stdout or "")
@@ -292,7 +294,7 @@ def tem_audio(caminho):
 
 def duracao_de(caminho):
     p = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+        ["ffprobe", "-protocol_whitelist", "file,pipe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", caminho],
         capture_output=True, text=True, timeout=60)
     try:
@@ -356,7 +358,7 @@ def comprimir(entrada, pasta):
     saida = os.path.join(pasta, "audio.ogg")
 
     if not tem_audio(entrada):
-        raise Falha("SEM_AUDIO", "o arquivo baixado nao tem faixa de audio")
+        raise Falha("SEM_AUDIO", "o arquivo recebido nao tem faixa de audio legivel")
 
     filtros = []
     if duracao_de(entrada) > DURACAO_PARA_CORTAR_SILENCIO:
@@ -366,7 +368,7 @@ def comprimir(entrada, pasta):
         filtros = ["-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-45dB"]
 
     ok, detalhe = rodar([
-        "ffmpeg", "-y", "-i", entrada, "-vn", *filtros,
+        "ffmpeg", "-y", "-protocol_whitelist", "file,pipe", "-i", entrada, "-vn", *filtros,
         "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "16k", saida,
     ], pasta)
     if not ok or not os.path.exists(saida):
@@ -405,6 +407,7 @@ class Motor:
     def __init__(self, db):
         self.db = db
         self.fila = queue.Queue()
+        self.arquivos = {}
         threading.Thread(target=self._laco, daemon=True).start()
         threading.Thread(target=self._resgatar, daemon=True).start()
         threading.Thread(target=self._varrer_sempre, daemon=True).start()
@@ -422,6 +425,10 @@ class Motor:
             except Exception as e:
                 # Falha de um trabalho nunca derruba o worker nem os outros.
                 self._marcar_erro(trabalho_id, "FALHA_INESPERADA", repr(e))
+            finally:
+                pasta = self.arquivos.pop(trabalho_id, None)
+                if pasta:
+                    pasta.cleanup()
 
     def _resgatar(self):
         """A instancia Free dorme depois de 15 minutos parada, e quem estava no
@@ -437,6 +444,11 @@ class Motor:
                 filter=firestore.FieldFilter("estado", "in", presos)
             ).limit(50).stream()
             for doc in consulta:
+                if doc.to_dict().get("plataforma") == "arquivo":
+                    if doc.id not in self.arquivos:
+                        self._marcar_erro(doc.id, "ARQUIVO_INDISPONIVEL",
+                                          "o servidor reiniciou; envie o arquivo novamente")
+                    continue
                 print("resgatando trabalho %s" % doc.id, flush=True)
                 self.enfileirar(doc.id)
         except Exception as e:
@@ -502,12 +514,14 @@ class Motor:
         dados = doc.to_dict()
         if dados.get("estado") in ("pronto", "erro"):
             return
-        url = dados["url"]
+        url = dados.get("url")
         plataforma = dados["plataforma"]
 
         with tempfile.TemporaryDirectory() as pasta:
-            self._andar(trabalho_id, "baixando")
             inicio = time.monotonic()
+
+            if plataforma != "arquivo":
+                self._andar(trabalho_id, "baixando")
 
             if plataforma == "youtube":
                 texto = tentar_legenda(url, pasta)
@@ -520,7 +534,13 @@ class Motor:
                 raise Falha("YOUTUBE_BLOQUEADO",
                             "sem legenda automatica acessivel, e o download e recusado a partir da nuvem")
 
-            bruto = baixar_audio(url, plataforma, pasta)
+            if plataforma == "arquivo":
+                envio = self.arquivos.get(trabalho_id)
+                if not envio:
+                    raise Falha("ARQUIVO_INDISPONIVEL", "envie o arquivo novamente")
+                bruto = os.path.join(envio.name, "entrada")
+            else:
+                bruto = baixar_audio(url, plataforma, pasta)
             tempos = {"segundosDownload": round(time.monotonic() - inicio, 1)}
 
             self._andar(trabalho_id, "convertendo", tempos)
@@ -579,6 +599,7 @@ def criar_trabalho(db, motor, url, ip, sessao, desafio):
 AJUDA = (
     "Decupa, backend da Fase 2.\n\n"
     "POST /transcrever    corpo JSON com url, devolve o id do trabalho\n"
+    "POST /transcrever-arquivo  audio binario, X-Decupa-Nome e X-Decupa-Sessao\n"
     "GET  /trabalho/<id>  estado e resultado daquele trabalho\n"
     "GET  /config         o que a tela precisa saber antes de pedir\n"
     "DEL  /trabalho/<id>  apaga o trabalho; a tela chama ao receber o texto\n\n"
@@ -602,6 +623,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, {
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
                 "limiteDia": LIMITE_DIA or None,
+                "limiteEnvioBytes": LIMITE_ENVIO_BYTES,
             })
             return
         if caminho.startswith("/trabalho/"):
@@ -635,6 +657,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         caminho = urlparse(self.path).path
+        if caminho == "/transcrever-arquivo":
+            self.receber_arquivo()
+            return
         if caminho not in ("/transcrever", "/sessao"):
             self.json(404, {"codigo": "ROTA_NAO_ENCONTRADA"})
             return
@@ -674,6 +699,69 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.json(202, {"id": trabalho_id, "estado": estado})
 
+    def receber_arquivo(self):
+        # O corpo e o proprio arquivo: le em blocos para nao carregar 50 MB
+        # na memoria. Autenticacao e tamanho sao conferidos antes da leitura.
+        pasta = None
+        try:
+            conferir_sessao(self.headers.get("X-Decupa-Sessao") or "")
+            try:
+                tamanho = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise Falha("CORPO_INVALIDO", "Content-Length invalido")
+            if tamanho <= 0:
+                raise Falha("ARQUIVO_VAZIO", "selecione um arquivo com audio")
+            if tamanho > LIMITE_ENVIO_BYTES:
+                raise Falha("ENVIO_GRANDE_DEMAIS", "o envio aceita ate 50 MB por arquivo")
+            nome = unquote(self.headers.get("X-Decupa-Nome") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            if not nome.lower().endswith(EXTENSOES_AUDIO):
+                raise Falha("FORMATO_NAO_SUPORTADO", "selecione um arquivo de audio")
+            pasta = tempfile.TemporaryDirectory(prefix="decupa-envio-")
+            prazo = time.monotonic() + 180
+            with open(os.path.join(pasta.name, "entrada"), "wb") as destino:
+                restante = tamanho
+                while restante:
+                    espera = prazo - time.monotonic()
+                    if espera <= 0:
+                        raise Falha("ENVIO_INTERROMPIDO", "o envio excedeu tres minutos")
+                    self.connection.settimeout(espera)
+                    bloco = self.rfile.read(min(restante, 64 * 1024))
+                    if not bloco:
+                        raise Falha("ENVIO_INTERROMPIDO", "o arquivo nao chegou inteiro")
+                    destino.write(bloco)
+                    restante -= len(bloco)
+            self.connection.settimeout(None)
+            ip = ip_de(self) if LIMITE_DIA > 0 else ""
+            cobrar_do_teto(self.server.db, ip)
+            ref = self.server.db.collection(TRABALHOS).document()
+            # O resgate no arranque ja precisa encontrar o arquivo quando o
+            # documento ficar visivel no Firestore.
+            self.server.motor.arquivos[ref.id] = pasta
+            try:
+                ref.set({
+                    "plataforma": "arquivo", "nomeArquivo": nome[:200],
+                    "bytesEnviados": tamanho, "estado": "na fila",
+                    "chaveIp": chave_ip(ip) if LIMITE_DIA > 0 else None,
+                    "criadoEm": firestore.SERVER_TIMESTAMP,
+                    "atualizadoEm": firestore.SERVER_TIMESTAMP,
+                })
+            except Exception:
+                self.server.motor.arquivos.pop(ref.id, None)
+                raise
+            pasta = None  # O worker assume a limpeza, inclusive se falhar.
+            self.server.motor.enfileirar(ref.id)
+        except (Falha, OSError) as erro:
+            self.close_connection = True  # Pode haver corpo ainda nao lido.
+            codigo = erro.codigo if isinstance(erro, Falha) else "ENVIO_INTERROMPIDO"
+            detalhe = erro.detalhe if isinstance(erro, Falha) else "a conexao caiu durante o envio"
+            status = 413 if codigo == "ENVIO_GRANDE_DEMAIS" else 429 if codigo == "LIMITE_DIARIO_ATINGIDO" else 400
+            self.json(status, {"codigo": codigo, "detalhe": detalhe})
+            return
+        finally:
+            if pasta:
+                pasta.cleanup()
+        self.json(202, {"id": ref.id, "estado": "na fila"})
+
     def json(self, codigo, corpo):
         self.responder(codigo, json.dumps(corpo, ensure_ascii=False, default=str, indent=2),
                        "application/json; charset=utf-8")
@@ -686,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
         # A tela mora no GitHub Pages e o backend aqui, entao sao origens
         # diferentes. Sem isto, a Fase 3 nao consegue falar com a Fase 2.
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Decupa-Nome, X-Decupa-Sessao")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.end_headers()
         if dados:

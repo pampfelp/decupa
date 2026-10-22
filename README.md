@@ -1,6 +1,6 @@
 # Decupa
 
-Cola o link de um video do Instagram, TikTok ou Facebook e recebe a
+Cola o link de um video do Instagram, TikTok ou Facebook, ou envia um arquivo de audio, e recebe a
 transcricao em portugues.
 
 Status: site publico com tela, backend, PWA e verificacao Turnstile.
@@ -31,6 +31,9 @@ TURNSTILE_SECRET    segredo usado na validacao e na assinatura da sessao
 POST /sessao          corpo {"desafio": "<token Turnstile>"}; devolve sessao
 POST /transcrever     corpo {"url": "<link do video>", "sessao": "<sessao>"}
                       devolve {"id": "...", "estado": "na fila"} na hora
+POST /transcrever-arquivo  corpo binario com o audio (ate 50 MiB)
+                      X-Decupa-Nome: nome do arquivo com encodeURIComponent
+                      X-Decupa-Sessao: mesma sessao assinada de /sessao
 GET  /trabalho/<id>   estado e resultado daquele trabalho
 ```
 
@@ -46,6 +49,18 @@ pra conferir sem tela.
 A chave publica tambem esta no `index.html` para a caixa aparecer antes do
 Render acordar. Ao trocar a sitekey, atualizar o HTML e publicar o site.
 
+O envio aceita MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA e AIFF.
+A extensao e conferida antes do upload, e o ffprobe confere o conteudo no
+worker. O arquivo vai em blocos para uma pasta temporaria; nao vai para o
+Firestore nem para armazenamento permanente. O worker apaga a pasta mesmo
+quando a conversao ou a transcricao falha. Se a instancia reiniciar antes
+de concluir, o trabalho informa ARQUIVO_INDISPONIVEL e pede novo envio.
+O teto de envio e separado do teto de 24 MiB do audio ja comprimido.
+
+O navegador acorda o servidor com GET /config antes de enviar o arquivo e
+nao repete o upload automaticamente se a resposta se perder. O limite de
+recepcao e de tres minutos. O processamento continua na fila existente.
+
 ## Erros com codigo, nunca mensagem generica
 
 A frase que a pessoa le e montada pela tela. O backend devolve o codigo e o
@@ -59,6 +74,11 @@ detalhe tecnico.
 | `DOWNLOAD_FALHOU` | qualquer outra falha do `yt-dlp` |
 | `CONVERSAO_FALHOU` | falha do `ffmpeg` |
 | `GROQ_RECUSOU` | a Groq devolveu erro |
+| `ARQUIVO_VAZIO` | arquivo sem conteudo |
+| `FORMATO_NAO_SUPORTADO` | extensao fora dos formatos de audio aceitos |
+| `ENVIO_GRANDE_DEMAIS` | arquivo original acima de 50 MiB |
+| `ENVIO_INTERROMPIDO` | conexao interrompida ou envio acima de tres minutos |
+| `ARQUIVO_INDISPONIVEL` | servidor reiniciou e perdeu o arquivo temporario |
 
 ## O caminho que o codigo faz
 

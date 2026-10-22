@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Decupa — vídeo em texto</title>
-<meta name="description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
+<meta name="description" content="Cole um link de vídeo ou envie um arquivo de áudio e receba a transcrição em português.">
 <meta name="theme-color" content="#0C4A45">
 
 <link rel="manifest" href="./manifest.json?v=10">
@@ -19,7 +19,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Decupa">
 <meta property="og:title" content="Decupa — vídeo em texto">
-<meta property="og:description" content="Cole o link de um vídeo do Instagram, TikTok ou Facebook e receba a transcrição em português.">
+<meta property="og:description" content="Cole um link de vídeo ou envie um arquivo de áudio e receba a transcrição em português.">
 <meta property="og:url" content="https://pampfelp.github.io/decupa/">
 <meta property="og:image" content="https://pampfelp.github.io/decupa/og.png">
 <meta property="og:locale" content="pt_BR">
@@ -29,7 +29,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700&family=IBM+Plex+Mono:wght@400&family=Spectral:wght@400&display=swap">
 
-<link rel="stylesheet" href="./style.css?v=10">
+<link rel="stylesheet" href="./style.css?v=13">
 <script>
   window.decupaTurnstilePronto = function (token) {
     window.decupaTurnstileToken = token;
@@ -54,7 +54,7 @@
 
   <header class="cabecalho">
     <h1 class="marca"><span id="marca-letras"></span><span class="cursor" id="cursor"></span></h1>
-    <p class="promessa">Transforme links de vídeos em texto de forma simples, rápida e precisa.</p>
+    <p class="promessa">Transforme links de vídeos ou arquivos de áudio em texto.</p>
   </header>
 
   <form class="fresta" id="forma" autocomplete="off">
@@ -72,6 +72,12 @@
         <path d="M0 5h24"/><path d="M20 1.5 24 5l-4 3.5"/>
       </svg>
     </button>
+    <div class="arquivo">
+      <label for="arquivo">Ou selecione um áudio</label>
+      <input id="arquivo" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.opus,.flac,.aac,.webm,.wma,.aif,.aiff" aria-describedby="arquivo-ajuda">
+      <button id="remover-arquivo" type="button" hidden>Remover</button>
+      <span id="arquivo-ajuda">Até 50 MB por arquivo. MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA ou AIFF.</span>
+    </div>
   </form>
 
   <div class="plataformas">
@@ -177,6 +183,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=12"></script>
+<script type="module" src="./app.js?v=13"></script>
 </body>
 </html>
