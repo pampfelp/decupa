@@ -18,7 +18,6 @@ if ("serviceWorker" in navigator) {
 const BACKEND = "https://decupa.onrender.com";
 const ETAPAS = ["baixando", "convertendo", "transcrevendo", "pronto"];
 const PASSO_MS = 2000;
-const LIMITE_ENVIO_BYTES = 50 * 1024 * 1024;
 const EXTENSOES_AUDIO = /\.(mp3|m4a|wav|ogg|opus|flac|aac|webm|wma|aif|aiff)$/i;
 
 // Cada codigo do backend vira uma frase que diz o que fazer. "Erro ao
@@ -34,7 +33,10 @@ const FRASES = {
   URL_AUSENTE: "Cole um link ou selecione um arquivo de áudio antes de começar.",
   ARQUIVO_VAZIO: "Esse arquivo está vazio. Selecione um arquivo com áudio.",
   FORMATO_NAO_SUPORTADO: "Selecione um áudio em MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA ou AIFF.",
-  ENVIO_GRANDE_DEMAIS: "O envio aceita até 50 MB por arquivo. Use uma versão menor ou mais comprimida do áudio.",
+  ENVIO_GRANDE_DEMAIS: "Um bloco excedeu o limite de envio. Atualize a página e tente novamente.",
+  ENVIO_INVALIDO: "Um bloco do arquivo não pôde ser confirmado. Selecione o áudio e envie novamente.",
+  ESPACO_INSUFICIENTE: "O servidor está sem espaço temporário agora. Tente novamente mais tarde.",
+  TEMPOS_AUSENTES: "O motor não devolveu os tempos necessários para juntar os trechos. Tente novamente.",
   ENVIO_INTERROMPIDO: "O envio foi interrompido. Confira sua conexão e tente de novo.",
   ARQUIVO_INDISPONIVEL: "O servidor reiniciou antes de terminar. Selecione o áudio e envie novamente.",
   ENVIO_INDISPONIVEL: "O servidor ainda não está pronto para receber arquivos. Tente novamente em alguns minutos.",
@@ -274,6 +276,9 @@ function escutar(id) {
     }
     const indice = ETAPAS.indexOf(dados.estado);
     if (indice >= 0) irPara(indice);
+    if (dados.estado === "na fila" && dados.plataforma === "arquivo") mostrarAviso("Áudio recebido. Aguardando a vez na fila de transcrição.");
+    if (dados.estado === "convertendo") esconderAviso();
+    if (dados.parteAtual) mostrarAviso("Transcrevendo trecho " + dados.parteAtual + " de " + dados.partesTotal + ". O resultado será um único texto.");
   }, () => mostrarErro("SEM_RESPOSTA", ""));
 }
 
@@ -332,7 +337,7 @@ async function comecar(url, audio) {
   try {
     resposta = audio ? await enviarArquivo(audio) : await pedirComPaciencia(url);
   } catch {
-    mostrarErro("SEM_RESPOSTA", "");
+    mostrarErro(audio ? "ENVIO_INTERROMPIDO" : "SEM_RESPOSTA", "");
     return;
   }
   esconderAviso();
@@ -390,24 +395,55 @@ async function pedirComPaciencia(url) {
 }
 
 async function enviarArquivo(audio) {
-  // Acorda com GET antes do upload. O arquivo e enviado uma unica vez:
-  // repetir um POST sem resposta pode criar duas transcricoes do mesmo audio.
   const resposta = await pedirComPaciencia(null);
   if (!resposta.ok) return resposta;
   const config = await resposta.json();
   if (!config.limiteEnvioBytes) {
     return new Response(JSON.stringify({ codigo: "ENVIO_INDISPONIVEL" }), { status: 503 });
   }
-  mostrarAviso("Enviando o áudio. Aguarde a confirmação antes de sair da página.");
-  return fetch(BACKEND + "/transcrever-arquivo", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "X-Decupa-Nome": encodeURIComponent(audio.name),
-      "X-Decupa-Sessao": desafio.sessao || ""
-    },
-    body: audio
-  });
+  const cabecalhos = {
+    "Content-Type": "application/octet-stream",
+    "X-Decupa-Nome": encodeURIComponent(audio.name),
+    "X-Decupa-Sessao": desafio.sessao || ""
+  };
+  // Compatibilidade enquanto o Render ainda publica o backend novo.
+  if (!config.envioEmPartes) {
+    if (audio.size > config.limiteEnvioBytes) return new Response(JSON.stringify({ codigo: "ENVIO_INDISPONIVEL" }), { status: 503 });
+    return fetch(BACKEND + "/transcrever-arquivo", { method: "POST", headers: cabecalhos, body: audio });
+  }
+  const envio = crypto.randomUUID().replaceAll("-", "");
+  const fatia = Math.min(config.fatiaEnvioBytes, config.limiteEnvioBytes);
+  if (!Number.isSafeInteger(fatia) || fatia <= 0) throw new Error("configuração de envio inválida");
+  let confirmado = false;
+  try {
+    for (let posicao = 0; posicao < audio.size; posicao += fatia) {
+      const bloco = audio.slice(posicao, posicao + fatia);
+      mostrarAviso("Enviando bloco " + (Math.floor(posicao / fatia) + 1) + " de " + Math.ceil(audio.size / fatia) + ". Mantenha a página aberta.");
+      let r;
+      for (let tentativa = 0; tentativa < 3; tentativa++) {
+        if (tentativa) await new Promise((resolve) => setTimeout(resolve, tentativa * 2000));
+        try {
+          r = await fetch(BACKEND + "/transcrever-arquivo", {
+            method: "POST",
+            headers: { ...cabecalhos, "X-Decupa-Envio": envio, "X-Decupa-Total": String(audio.size), "X-Decupa-Posicao": String(posicao) },
+            body: bloco
+          });
+          if (![502, 503, 504].includes(r.status)) break;
+        } catch (erro) {
+          if (tentativa === 2) throw erro;
+        }
+      }
+      if (!r.ok) return r;
+      const dados = await r.json();
+      if (dados.id !== envio || dados.recebidos !== Math.min(posicao + fatia, audio.size)) throw new Error("confirmação de bloco inválida");
+      if (dados.recebidos === audio.size) {
+        confirmado = true;
+        return new Response(JSON.stringify({ id: envio }), { status: 202 });
+      }
+    }
+  } finally {
+    if (!confirmado) fetch(BACKEND + "/envio/" + envio, { method: "DELETE", headers: { "X-Decupa-Sessao": desafio.sessao || "" } }).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------------ desafio
@@ -510,7 +546,6 @@ $("forma").addEventListener("submit", (e) => {
   let erro = "";
   if (audio) {
     if (!audio.size) erro = "ARQUIVO_VAZIO";
-    else if (audio.size > LIMITE_ENVIO_BYTES) erro = "ENVIO_GRANDE_DEMAIS";
     else if (!EXTENSOES_AUDIO.test(audio.name)) erro = "FORMATO_NAO_SUPORTADO";
   } else if (!url) erro = "URL_AUSENTE";
   if (erro) { mostrarErro(erro, ""); fita.hidden = false; return; }

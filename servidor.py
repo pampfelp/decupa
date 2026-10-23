@@ -21,6 +21,11 @@ import tempfile
 import threading
 import time
 import secrets
+import math
+import shutil
+import wave
+from contextlib import closing
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
@@ -37,6 +42,9 @@ TRABALHOS = "trabalhos"
 LIMITES = "limites"
 LIMITE_CORPO = 4096
 LIMITE_ENVIO_BYTES = 50 * 1024 * 1024
+FATIA_ENVIO_BYTES = 8 * 1024 * 1024
+TRECHO_SEGUNDOS = 600
+SOBREPOSICAO_SEGUNDOS = 2
 EXTENSOES_AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac", ".webm", ".wma", ".aif", ".aiff")
 
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
@@ -384,16 +392,102 @@ def comprimir(entrada, pasta):
     return saida
 
 
-def transcrever(caminho):
+def partes_de_audio(entrada, pasta):
+    """Decodifica uma vez; corta por amostras, sem remover pausas.
+
+    WAV mono 16 kHz: ate 604 s / 19,4 MB por requisicao. As janelas
+    sobrepoem dois segundos de cada lado da divisao nominal de dez minutos.
+    So uma janela fica no disco e na memoria por vez.
+    """
+    taxa = 16000
+    passo = TRECHO_SEGUNDOS * taxa * 2
+    margem = SOBREPOSICAO_SEGUNDOS * taxa * 2
+    with tempfile.TemporaryFile() as erros:
+        processo = subprocess.Popen([
+            "ffmpeg", "-v", "error", "-protocol_whitelist", "file,pipe", "-i", entrada,
+            "-map", "0:a:0", "-ac", "1", "-ar", str(taxa), "-f", "s16le", "pipe:1",
+        ], stdout=subprocess.PIPE, stderr=erros)
+        try:
+            janela = bytearray()
+            inicio = 0
+            primeira = True
+            while True:
+                alvo = passo + margem if primeira else passo + 2 * margem
+                novos = 0
+                while len(janela) < alvo:
+                    bloco = processo.stdout.read(min(alvo - len(janela), 64 * 1024))
+                    if not bloco:
+                        break
+                    janela.extend(bloco)
+                    novos += len(bloco)
+                if not novos:
+                    break
+                caminho = os.path.join(pasta, "trecho.wav")
+                with wave.open(caminho, "wb") as audio:
+                    audio.setnchannels(1)
+                    audio.setsampwidth(2)
+                    audio.setframerate(taxa)
+                    audio.writeframes(janela)
+                yield caminho, inicio / (taxa * 2), len(janela) / (taxa * 2)
+                if len(janela) < alvo:
+                    break
+                inicio += len(janela) - 2 * margem
+                janela = janela[-2 * margem:]
+                primeira = False
+            if processo.wait(timeout=60):
+                erros.seek(0)
+                raise Falha("CONVERSAO_FALHOU", erros.read()[-1500:].decode("utf-8", errors="replace"))
+            if primeira and not novos:
+                raise Falha("SEM_AUDIO", "o arquivo nao produziu amostras de audio")
+        finally:
+            if processo.poll() is None:
+                processo.kill()
+                processo.wait()
+            processo.stdout.close()
+
+
+def unir_palavras(anteriores, novas, corte):
+    """Alinha so a vizinhanca do corte; repeticoes fora dela sao mantidas."""
+    if not anteriores:
+        return novas
+    if not novas:
+        return anteriores
+    margem = SOBREPOSICAO_SEGUNDOS + 1
+    esquerda = [(i, p) for i, p in enumerate(anteriores) if p["end"] >= corte - margem]
+    direita = [(i, p) for i, p in enumerate(novas) if p["start"] <= corte + margem]
+    normalizar_palavra = lambda p: re.sub(r"\W", "", p["word"].casefold())
+    comparador = SequenceMatcher(None, [normalizar_palavra(p) for _, p in esquerda],
+                                [normalizar_palavra(p) for _, p in direita], autojunk=False)
+    ancoras = []
+    for bloco in comparador.get_matching_blocks():
+        for deslocamento in range(bloco.size):
+            i, a = esquerda[bloco.a + deslocamento]
+            j, b = direita[bloco.b + deslocamento]
+            if normalizar_palavra(a) and abs(a["start"] - b["start"]) < 1:
+                ancoras.append((abs((a["end"] + b["end"]) / 2 - corte), i, j))
+    if ancoras:
+        _, i, j = min(ancoras)
+        return anteriores[:i + 1] + novas[j + 1:]
+    # Se o motor reconheceu palavras diferentes, divide pela posicao temporal
+    # no centro da sobreposicao; nunca elimina frases repetidas por texto so.
+    return ([p for p in anteriores if (p["start"] + p["end"]) / 2 < corte]
+            + [p for p in novas if (p["start"] + p["end"]) / 2 >= corte])
+
+
+def transcrever(caminho, palavras=False):
     chave = os.environ.get("GROQ_API_KEY")
     if not chave:
         raise Falha("GROQ_SEM_CHAVE", "GROQ_API_KEY nao esta definida no ambiente")
+    dados = {"model": MODELO, "language": "pt", "response_format": "verbose_json"}
+    if palavras:
+        dados["timestamp_granularities[]"] = ["word", "segment"]
+    nome = os.path.basename(caminho)
     with open(caminho, "rb") as f:
         r = requests.post(
             GROQ_URL,
             headers={"Authorization": "Bearer " + chave},
-            files={"file": ("audio.ogg", f, "audio/ogg")},
-            data={"model": MODELO, "language": "pt", "response_format": "verbose_json"},
+            files={"file": (nome, f, "audio/wav" if nome.endswith(".wav") else "audio/ogg")},
+            data=dados,
             timeout=600,
         )
     if r.status_code != 200:
@@ -408,12 +502,44 @@ class Motor:
         self.db = db
         self.fila = queue.Queue()
         self.arquivos = {}
+        self.envios = {}
+        self.trava_envios = threading.Lock()
         threading.Thread(target=self._laco, daemon=True).start()
         threading.Thread(target=self._resgatar, daemon=True).start()
         threading.Thread(target=self._varrer_sempre, daemon=True).start()
 
     def enfileirar(self, trabalho_id):
         self.fila.put(trabalho_id)
+
+    def enfileirar_audio(self, nome, tamanho, pasta, ip, trabalho_id=None, dono=None):
+        ref = self.db.collection(TRABALHOS).document(trabalho_id) if trabalho_id else self.db.collection(TRABALHOS).document()
+        self.arquivos[ref.id] = pasta
+        try:
+            ref.set({
+                "plataforma": "arquivo", "nomeArquivo": nome[:200],
+                "bytesEnviados": tamanho, "estado": "na fila",
+                "envioDono": dono,
+                "chaveIp": chave_ip(ip) if LIMITE_DIA > 0 else None,
+                "criadoEm": firestore.SERVER_TIMESTAMP,
+                "atualizadoEm": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            self.arquivos.pop(ref.id, None)
+            raise
+        self.enfileirar(ref.id)
+        return ref.id
+
+    def limpar_envios(self):
+        with self.trava_envios:
+            for chave, envio in list(self.envios.items()):
+                if time.monotonic() - envio["atualizado"] > JANELA_LEITURA * 60 and envio["trava"].acquire(blocking=False):
+                    try:
+                        if envio["pasta"]:
+                            envio["pasta"].cleanup()
+                        envio["cancelado"] = True
+                        del self.envios[chave]
+                    finally:
+                        envio["trava"].release()
 
     def _laco(self):
         while True:
@@ -470,12 +596,15 @@ class Motor:
                 print("varredura falhou: %r" % e, flush=True)
 
     def _varrer(self):
+        self.limpar_envios()
         limite = datetime.now(timezone.utc) - timedelta(minutes=JANELA_LEITURA)
         velhos = self.db.collection(TRABALHOS).where(
-            filter=firestore.FieldFilter("criadoEm", "<", limite)
+            filter=firestore.FieldFilter("atualizadoEm", "<", limite)
         ).limit(300).stream()
         apagados = 0
         for doc in velhos:
+            if doc.id in self.arquivos:
+                continue  # Arquivo ainda na fila ou em processamento.
             doc.reference.delete()
             apagados += 1
 
@@ -539,6 +668,8 @@ class Motor:
                 if not envio:
                     raise Falha("ARQUIVO_INDISPONIVEL", "envie o arquivo novamente")
                 bruto = os.path.join(envio.name, "entrada")
+                self._transcrever_arquivo(trabalho_id, dados, bruto, pasta)
+                return
             else:
                 bruto = baixar_audio(url, plataforma, pasta)
             tempos = {"segundosDownload": round(time.monotonic() - inicio, 1)}
@@ -557,6 +688,40 @@ class Motor:
 
             self._concluir(trabalho_id, dados, (resposta.get("text") or "").strip(),
                            "groq " + MODELO, tempos)
+
+    def _transcrever_arquivo(self, trabalho_id, dados, entrada, pasta):
+        self._andar(trabalho_id, "convertendo")
+        if not tem_audio(entrada):
+            raise Falha("SEM_AUDIO", "o arquivo recebido nao tem faixa de audio legivel")
+        duracao = duracao_de(entrada)
+        total = max(1, math.ceil((duracao - SOBREPOSICAO_SEGUNDOS) / TRECHO_SEGUNDOS))
+        palavras = []
+        fim = 0
+        partes = 0
+        bytes_audio = 0
+        inicio = time.monotonic()
+        with closing(partes_de_audio(entrada, pasta)) as trechos:
+            for indice, (caminho, deslocamento, segundos) in enumerate(trechos, 1):
+                self._andar(trabalho_id, "transcrevendo", {"parteAtual": indice, "partesTotal": max(total, indice)})
+                if os.path.getsize(caminho) > LIMITE_GROQ_BYTES:
+                    raise Falha("AUDIO_GRANDE_DEMAIS", "um trecho excedeu o limite de transcricao")
+                bytes_audio += os.path.getsize(caminho)
+                try:
+                    resposta = transcrever(caminho, palavras=True)
+                except Falha as erro:
+                    raise Falha(erro.codigo, "trecho %d: %s" % (indice, erro.detalhe))
+                if resposta.get("text", "").strip() and not resposta.get("words"):
+                    raise Falha("TEMPOS_AUSENTES", "o motor nao devolveu os tempos das palavras do trecho %d" % indice)
+                novas = [{"word": p["word"], "start": float(p["start"]) + deslocamento,
+                          "end": float(p["end"]) + deslocamento} for p in resposta.get("words", [])]
+                palavras = unir_palavras(palavras, novas, (indice - 1) * TRECHO_SEGUNDOS)
+                fim = deslocamento + segundos
+                partes = indice
+        texto = " ".join(p["word"].strip() for p in palavras).strip()
+        self._concluir(trabalho_id, dados, texto, "groq " + MODELO,
+                       {"duracaoAudio": round(fim, 3), "partesTotal": partes, "parteAtual": partes,
+                        "bytesAudio": bytes_audio,
+                        "segundosTranscricao": round(time.monotonic() - inicio, 1)})
 
     def _concluir(self, trabalho_id, dados, texto, fonte, tempos):
         campos = {"texto": texto, "fonte": fonte}
@@ -624,6 +789,8 @@ class Handler(BaseHTTPRequestHandler):
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
                 "limiteDia": LIMITE_DIA or None,
                 "limiteEnvioBytes": LIMITE_ENVIO_BYTES,
+                "fatiaEnvioBytes": FATIA_ENVIO_BYTES,
+                "envioEmPartes": True,
             })
             return
         if caminho.startswith("/trabalho/"):
@@ -645,6 +812,9 @@ class Handler(BaseHTTPRequestHandler):
         e o pior caso de apagar um id alheio e o dono perder o proprio texto,
         que e o mesmo destino que ele teria em 30 minutos."""
         caminho = urlparse(self.path).path
+        if caminho.startswith("/envio/"):
+            self.cancelar_envio(caminho[len("/envio/"):])
+            return
         if not caminho.startswith("/trabalho/"):
             self.json(404, {"codigo": "ROTA_NAO_ENCONTRADA"})
             return
@@ -700,6 +870,9 @@ class Handler(BaseHTTPRequestHandler):
         self.json(202, {"id": trabalho_id, "estado": estado})
 
     def receber_arquivo(self):
+        if self.headers.get("X-Decupa-Envio") is not None:
+            self.receber_parte()
+            return
         # O corpo e o proprio arquivo: le em blocos para nao carregar 50 MB
         # na memoria. Autenticacao e tamanho sao conferidos antes da leitura.
         pasta = None
@@ -717,39 +890,12 @@ class Handler(BaseHTTPRequestHandler):
             if not nome.lower().endswith(EXTENSOES_AUDIO):
                 raise Falha("FORMATO_NAO_SUPORTADO", "selecione um arquivo de audio")
             pasta = tempfile.TemporaryDirectory(prefix="decupa-envio-")
-            prazo = time.monotonic() + 180
             with open(os.path.join(pasta.name, "entrada"), "wb") as destino:
-                restante = tamanho
-                while restante:
-                    espera = prazo - time.monotonic()
-                    if espera <= 0:
-                        raise Falha("ENVIO_INTERROMPIDO", "o envio excedeu tres minutos")
-                    self.connection.settimeout(espera)
-                    bloco = self.rfile.read(min(restante, 64 * 1024))
-                    if not bloco:
-                        raise Falha("ENVIO_INTERROMPIDO", "o arquivo nao chegou inteiro")
-                    destino.write(bloco)
-                    restante -= len(bloco)
-            self.connection.settimeout(None)
+                self.ler_arquivo(destino, tamanho)
             ip = ip_de(self) if LIMITE_DIA > 0 else ""
             cobrar_do_teto(self.server.db, ip)
-            ref = self.server.db.collection(TRABALHOS).document()
-            # O resgate no arranque ja precisa encontrar o arquivo quando o
-            # documento ficar visivel no Firestore.
-            self.server.motor.arquivos[ref.id] = pasta
-            try:
-                ref.set({
-                    "plataforma": "arquivo", "nomeArquivo": nome[:200],
-                    "bytesEnviados": tamanho, "estado": "na fila",
-                    "chaveIp": chave_ip(ip) if LIMITE_DIA > 0 else None,
-                    "criadoEm": firestore.SERVER_TIMESTAMP,
-                    "atualizadoEm": firestore.SERVER_TIMESTAMP,
-                })
-            except Exception:
-                self.server.motor.arquivos.pop(ref.id, None)
-                raise
+            trabalho_id = self.server.motor.enfileirar_audio(nome, tamanho, pasta, ip)
             pasta = None  # O worker assume a limpeza, inclusive se falhar.
-            self.server.motor.enfileirar(ref.id)
         except (Falha, OSError) as erro:
             self.close_connection = True  # Pode haver corpo ainda nao lido.
             codigo = erro.codigo if isinstance(erro, Falha) else "ENVIO_INTERROMPIDO"
@@ -760,7 +906,131 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if pasta:
                 pasta.cleanup()
-        self.json(202, {"id": ref.id, "estado": "na fila"})
+        self.json(202, {"id": trabalho_id, "estado": "na fila"})
+
+    def ler_arquivo(self, destino, tamanho):
+        prazo = time.monotonic() + 180
+        resumo = hashlib.sha256()
+        restante = tamanho
+        while restante:
+            espera = prazo - time.monotonic()
+            if espera <= 0:
+                raise Falha("ENVIO_INTERROMPIDO", "o envio do bloco excedeu tres minutos")
+            self.connection.settimeout(espera)
+            bloco = self.rfile.read1(min(restante, 64 * 1024))
+            if not bloco:
+                raise Falha("ENVIO_INTERROMPIDO", "o bloco nao chegou inteiro")
+            if destino:
+                destino.write(bloco)
+            resumo.update(bloco)
+            restante -= len(bloco)
+        self.connection.settimeout(None)
+        return resumo.hexdigest()
+
+    def receber_parte(self):
+        try:
+            sessao = self.headers.get("X-Decupa-Sessao") or ""
+            conferir_sessao(sessao)
+            chave = self.headers.get("X-Decupa-Envio") or ""
+            nome = unquote(self.headers.get("X-Decupa-Nome") or "").replace("\\", "/").rsplit("/", 1)[-1]
+            try:
+                total = int(self.headers.get("X-Decupa-Total") or 0)
+                posicao = int(self.headers.get("X-Decupa-Posicao") or 0)
+                tamanho = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise Falha("CORPO_INVALIDO", "tamanho ou posicao invalidos")
+            if not re.fullmatch(r"[a-f0-9]{32}", chave) or total <= 0 or total > 2**53 - 1 or posicao < 0 or tamanho <= 0 or posicao + tamanho > total:
+                raise Falha("CORPO_INVALIDO", "identificador, tamanho ou posicao invalidos")
+            if tamanho > LIMITE_ENVIO_BYTES:
+                raise Falha("ENVIO_GRANDE_DEMAIS", "cada bloco aceita ate 50 MB")
+            if not nome.lower().endswith(EXTENSOES_AUDIO):
+                raise Falha("FORMATO_NAO_SUPORTADO", "selecione um arquivo de audio")
+            motor = self.server.motor
+            motor.limpar_envios()
+            dono = hmac.new(sessao.encode(), chave.encode(), hashlib.sha256).hexdigest()
+            with motor.trava_envios:
+                envio = motor.envios.get(chave)
+            if envio is None:
+                existente = self.server.db.collection(TRABALHOS).document(chave).get()
+                if existente.exists:
+                    dados = existente.to_dict()
+                    if dados.get("envioDono") != dono or dados.get("bytesEnviados") != total:
+                        raise Falha("ENVIO_INVALIDO", "este identificador pertence a outro envio")
+                    self.ler_arquivo(None, tamanho)
+                    self.json(202, {"id": chave, "recebidos": total, "estado": dados["estado"]})
+                    return
+            with motor.trava_envios:
+                envio = motor.envios.get(chave)
+                if envio is None:
+                    if posicao != 0:
+                        raise Falha("ARQUIVO_INDISPONIVEL", "o envio expirou ou o servidor reiniciou; envie novamente")
+                    pasta = tempfile.TemporaryDirectory(prefix="decupa-envio-")
+                    open(os.path.join(pasta.name, "entrada"), "wb").close()
+                    envio = {"nome": nome, "total": total, "dono": dono,
+                             "pasta": pasta, "recebidos": 0, "blocos": {}, "concluido": False,
+                             "trava": threading.Lock(), "atualizado": time.monotonic()}
+                    motor.envios[chave] = envio
+            with envio["trava"]:
+                if envio.get("cancelado"):
+                    raise Falha("ARQUIVO_INDISPONIVEL", "o envio foi cancelado; envie novamente")
+                if (envio["dono"] != dono
+                        or envio["nome"] != nome or envio["total"] != total):
+                    raise Falha("ENVIO_INVALIDO", "este identificador pertence a outro envio")
+                envio["atualizado"] = time.monotonic()
+                repetido = envio["blocos"].get(posicao)
+                if repetido:
+                    if repetido != (tamanho, self.ler_arquivo(None, tamanho)):
+                        raise Falha("ENVIO_INVALIDO", "o bloco reenviado tem conteudo diferente")
+                else:
+                    if posicao != envio["recebidos"]:
+                        raise Falha("ENVIO_INVALIDO", "os blocos precisam chegar em ordem")
+                    if shutil.disk_usage(tempfile.gettempdir()).free < tamanho + 2 * LIMITE_ENVIO_BYTES:
+                        raise Falha("ESPACO_INSUFICIENTE", "o servidor esta sem espaco temporario; tente mais tarde")
+                    with open(os.path.join(envio["pasta"].name, "entrada"), "r+b") as destino:
+                        destino.seek(posicao)
+                        try:
+                            resumo = self.ler_arquivo(destino, tamanho)
+                        except Exception:
+                            destino.truncate(posicao)
+                            raise
+                    envio["blocos"][posicao] = (tamanho, resumo)
+                    envio["recebidos"] += tamanho
+                if envio["recebidos"] == total and not envio["concluido"]:
+                    ip = ip_de(self) if LIMITE_DIA > 0 else ""
+                    cobrar_do_teto(self.server.db, ip)
+                    motor.enfileirar_audio(nome, total, envio["pasta"], ip, chave, dono)
+                    envio["pasta"] = None  # A limpeza passa ao worker.
+                    envio["concluido"] = True
+                resposta = {"id": chave, "recebidos": envio["recebidos"],
+                            "estado": "na fila" if envio["concluido"] else "enviando"}
+                status = 202 if envio["concluido"] else 200
+        except (Falha, OSError) as erro:
+            self.close_connection = True
+            codigo = erro.codigo if isinstance(erro, Falha) else "ENVIO_INTERROMPIDO"
+            detalhe = erro.detalhe if isinstance(erro, Falha) else "o bloco nao chegou inteiro; tente novamente"
+            self.json(413 if codigo == "ENVIO_GRANDE_DEMAIS" else 400, {"codigo": codigo, "detalhe": detalhe})
+            return
+        self.json(status, resposta)
+
+    def cancelar_envio(self, chave):
+        try:
+            sessao = self.headers.get("X-Decupa-Sessao") or ""
+            conferir_sessao(sessao)
+            envio = self.server.motor.envios.get(chave)
+            if envio:
+                with envio["trava"]:
+                    if envio["dono"] != hmac.new(sessao.encode(), chave.encode(), hashlib.sha256).hexdigest():
+                        raise Falha("ENVIO_INVALIDO", "este identificador pertence a outro envio")
+                    if envio["pasta"]:
+                        envio["pasta"].cleanup()
+                        envio["pasta"] = None
+                        envio["cancelado"] = True
+                        with self.server.motor.trava_envios:
+                            self.server.motor.envios.pop(chave, None)
+        except Falha as erro:
+            self.json(400, {"codigo": erro.codigo})
+            return
+        self.json(200, {"apagado": True})
 
     def json(self, codigo, corpo):
         self.responder(codigo, json.dumps(corpo, ensure_ascii=False, default=str, indent=2),
@@ -774,7 +1044,7 @@ class Handler(BaseHTTPRequestHandler):
         # A tela mora no GitHub Pages e o backend aqui, entao sao origens
         # diferentes. Sem isto, a Fase 3 nao consegue falar com a Fase 2.
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Decupa-Nome, X-Decupa-Sessao")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Decupa-Nome, X-Decupa-Sessao, X-Decupa-Envio, X-Decupa-Total, X-Decupa-Posicao")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.end_headers()
         if dados:

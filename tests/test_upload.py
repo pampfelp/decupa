@@ -72,6 +72,8 @@ class Upload(unittest.TestCase):
         self.motor.db = self.db
         self.motor.fila = queue.Queue()
         self.motor.arquivos = {}
+        self.motor.envios = {}
+        self.motor.trava_envios = threading.Lock()
         self.http = s.ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
         self.http.db, self.http.motor = self.db, self.motor
         threading.Thread(target=self.http.serve_forever, daemon=True).start()
@@ -82,6 +84,9 @@ class Upload(unittest.TestCase):
         self.http.server_close()
         for pasta in list(self.motor.arquivos.values()):
             pasta.cleanup()
+        for envio in self.motor.envios.values():
+            if envio["pasta"]:
+                envio["pasta"].cleanup()
         self.ambiente.stop()
 
     def pedir(self, corpo=b"audio", nome="voz.mp3", sessao=None, tamanho=None):
@@ -114,7 +119,8 @@ class Upload(unittest.TestCase):
         pasta = self.motor.arquivos[trabalho_id].name
         # Exercita o laco real, inclusive o finally de limpeza. O motor de
         # fala e substituido para o teste nunca consumir cota externa.
-        with patch.object(s, "transcrever", return_value=resposta or {"text": "Audio transcrito.", "duration": 1},
+        with patch.object(s, "transcrever", return_value=resposta or {"text": "Audio transcrito.", "duration": 1,
+                          "words": [{"word": "Audio", "start": 0, "end": .3}, {"word": "transcrito.", "start": .3, "end": .9}]},
                           side_effect=falha), patch.object(s, "baixar_audio", side_effect=AssertionError("upload nao baixa link")):
             threading.Thread(target=self.motor._laco, daemon=True).start()
             prazo = time.monotonic() + 10
