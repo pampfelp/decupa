@@ -79,6 +79,9 @@ abaixo do limite de 24 MiB reservado para as chamadas da Groq. Pausas nao sao
 removidas. Cada trecho e transcrito em requisicao separada com tempos de
 palavras; a juncao alinha somente a sobreposicao, preservando repeticoes reais.
 A tela acompanha trecho atual/total e recebe uma unica transcricao no fim.
+Se a Groq responder 429 com espera de ate um minuto, repete o mesmo trecho
+ate tres tentativas, respeitando retry-after. Cota com espera maior ou erro
+persistente e informado; dividir arquivos nao remove a cota horaria/diaria.
 Se um trecho falhar, o trabalho inteiro aparece como erro, nunca como texto
 completo. Precisao do reconhecimento e estimativa dos tempos dependem da Groq.
 Referencia: https://console.groq.com/docs/speech-to-text (conferida em 23/10/2026).

@@ -9,7 +9,7 @@ import socket
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from urllib.parse import quote
 import wave
 
@@ -188,6 +188,38 @@ class CortesDeAudio(unittest.TestCase):
         depois = palavras(["muito", "muito", "boa", "continua", "aqui"], 599.4)
         resultado = s.unir_palavras(antes, depois, 600)
         self.assertEqual([p["word"] for p in resultado], ["uma", "ideia", "muito", "muito", "boa", "continua", "aqui"])
+
+
+class RequisicoesGroq(unittest.TestCase):
+    def test_repeticao_temporaria_envia_mesmo_trecho_e_pede_tempos(self):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as arquivo:
+            arquivo.write(b"audio local de teste")
+            caminho = arquivo.name
+        try:
+            respostas = [Mock(status_code=429, headers={"retry-after": "2"}), Mock(status_code=200)]
+            respostas[1].json.return_value = {"words": []}
+            with patch.dict(os.environ, {"GROQ_API_KEY": "chave-local-de-teste"}), patch.object(s.requests, "post", side_effect=respostas) as enviar, patch.object(s.time, "sleep") as aguardar:
+                self.assertEqual(s.transcrever(caminho, palavras=True), {"words": []})
+                self.assertEqual(enviar.call_count, 2)
+                aguardar.assert_called_once_with(2)
+                self.assertEqual(enviar.call_args.kwargs["data"]["timestamp_granularities[]"], ["word", "segment"])
+                self.assertEqual(enviar.call_args.kwargs["files"]["file"][2], "audio/wav")
+        finally:
+            os.unlink(caminho)
+
+    def test_cota_longa_nao_fica_repetindo_o_trecho(self):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as arquivo:
+            caminho = arquivo.name
+        try:
+            recusada = Mock(status_code=429, headers={"retry-after": "3600"}, text="cota indisponivel")
+            with patch.dict(os.environ, {"GROQ_API_KEY": "chave-local-de-teste"}), patch.object(s.requests, "post", return_value=recusada) as enviar, patch.object(s.time, "sleep") as aguardar:
+                with self.assertRaises(s.Falha) as erro:
+                    s.transcrever(caminho, palavras=True)
+                self.assertEqual(erro.exception.codigo, "GROQ_RECUSOU")
+                self.assertEqual(enviar.call_count, 1)
+                aguardar.assert_not_called()
+        finally:
+            os.unlink(caminho)
 
 
 if __name__ == "__main__":

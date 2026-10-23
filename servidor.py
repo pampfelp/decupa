@@ -483,13 +483,24 @@ def transcrever(caminho, palavras=False):
         dados["timestamp_granularities[]"] = ["word", "segment"]
     nome = os.path.basename(caminho)
     with open(caminho, "rb") as f:
-        r = requests.post(
-            GROQ_URL,
-            headers={"Authorization": "Bearer " + chave},
-            files={"file": (nome, f, "audio/wav" if nome.endswith(".wav") else "audio/ogg")},
-            data=dados,
-            timeout=600,
-        )
+        for tentativa in range(3 if palavras else 1):
+            f.seek(0)
+            r = requests.post(
+                GROQ_URL,
+                headers={"Authorization": "Bearer " + chave},
+                files={"file": (nome, f, "audio/wav" if nome.endswith(".wav") else "audio/ogg")},
+                data=dados,
+                timeout=600,
+            )
+            if r.status_code != 429 or not palavras or tentativa == 2:
+                break
+            try:
+                espera = float(r.headers.get("retry-after", "5"))
+            except ValueError:
+                espera = 5
+            if not math.isfinite(espera) or espera > 60:
+                break  # Cota longa: devolver o erro em vez de prender a fila.
+            time.sleep(max(1, espera))
     if r.status_code != 200:
         raise Falha("GROQ_RECUSOU", "%s: %s" % (r.status_code, r.text))
     return r.json()
@@ -786,6 +797,7 @@ class Handler(BaseHTTPRequestHandler):
             # escrita no codigo. Assim ligar o Turnstile e mexer no Render, nao
             # publicar versao nova do site.
             self.json(200, {
+                "versao": "2026-10-23.2",
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
                 "limiteDia": LIMITE_DIA or None,
                 "limiteEnvioBytes": LIMITE_ENVIO_BYTES,
