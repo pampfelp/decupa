@@ -18,13 +18,14 @@ if ("serviceWorker" in navigator) {
 const BACKEND = "https://decupa.onrender.com";
 const ETAPAS = ["baixando", "convertendo", "transcrevendo", "pronto"];
 const PASSO_MS = 2000;
-const EXTENSOES_AUDIO = /\.(mp3|m4a|wav|ogg|opus|flac|aac|webm|wma|aif|aiff)$/i;
+const EXTENSOES_AUDIO = /\.(mp3|m4a|wav|ogg|opus|flac|aac|webm|wma|aif|aiff|mp4|mov|m4v)$/i;
 
 // Cada codigo do backend vira uma frase que diz o que fazer. "Erro ao
 // processar" nao e acionavel; "o Instagram recusou" e.
 const FRASES = {
   YOUTUBE_BLOQUEADO: "O YouTube não deixa baixar a partir de um servidor. Por enquanto o Decupa cobre Instagram, TikTok e Facebook.",
   INSTAGRAM_BLOQUEADO: "O Instagram recusou esse link agora. Costuma voltar sozinho em alguns minutos.",
+  INSTAGRAM_SEM_ACESSO: "O Instagram não entregou esse vídeo ao servidor. Esperar não costuma resolver. Salve o vídeo no celular e envie o arquivo aqui.",
   PLATAFORMA_NAO_SUPORTADA: "Esse link não é do Instagram, do TikTok, do YouTube nem do Facebook.",
   DOWNLOAD_FALHOU: "Não deu para baixar esse vídeo. Ele pode ser privado, ter sido removido, ou o link pode estar incompleto.",
   CONVERSAO_FALHOU: "O áudio não pôde ser convertido. Confira se o arquivo está completo e pode ser reproduzido.",
@@ -32,7 +33,7 @@ const FRASES = {
   GROQ_SEM_CHAVE: "A transcrição está desligada no servidor.",
   URL_AUSENTE: "Cole um link ou selecione um arquivo de áudio antes de começar.",
   ARQUIVO_VAZIO: "Esse arquivo está vazio. Selecione um arquivo com áudio.",
-  FORMATO_NAO_SUPORTADO: "Selecione um áudio em MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA ou AIFF.",
+  FORMATO_NAO_SUPORTADO: "Selecione um áudio ou vídeo em MP3, M4A, WAV, OGG, OPUS, FLAC, AAC, WEBM, WMA, AIFF, MP4, MOV ou M4V.",
   ENVIO_GRANDE_DEMAIS: "Um bloco excedeu o limite de envio. Atualize a página e tente novamente.",
   ENVIO_INVALIDO: "Um bloco do arquivo não pôde ser confirmado. Selecione o áudio e envie novamente.",
   ESPACO_INSUFICIENTE: "O servidor está sem espaço temporário agora. Tente novamente mais tarde.",

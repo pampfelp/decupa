@@ -45,7 +45,10 @@ LIMITE_ENVIO_BYTES = 50 * 1024 * 1024
 FATIA_ENVIO_BYTES = 8 * 1024 * 1024
 TRECHO_SEGUNDOS = 600
 SOBREPOSICAO_SEGUNDOS = 2
-EXTENSOES_AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac", ".webm", ".wma", ".aif", ".aiff")
+# Video entra porque o ffmpeg ja tira o audio dele (-vn). Serve para o Reel salvo no
+# celular quando o Instagram nao entrega o link ao servidor.
+EXTENSOES_AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac", ".webm", ".wma", ".aif", ".aiff",
+                   ".mp4", ".mov", ".m4v")
 
 # Teto do anonimo. Cobre uso curioso e mata uso abusivo. Link que volta do
 # cache nao conta, porque nao custa banda, nem cota, nem risco de bloqueio.
@@ -65,7 +68,7 @@ LIMITE_DIA = 0
 # As duas excecoes sao onde o download chegou a acontecer de verdade. Devolver
 # tambem nesses casos abriria a porta pra alguem gastar banda a vontade
 # mandando link quebrado em laco, sem nunca tocar no teto.
-SEM_DEVOLUCAO = ("DOWNLOAD_FALHOU", "INSTAGRAM_BLOQUEADO")
+SEM_DEVOLUCAO = ("DOWNLOAD_FALHOU", "INSTAGRAM_BLOQUEADO", "INSTAGRAM_SEM_ACESSO")
 
 # Nao ha limite de duracao. Decisao dele em 28/09, depois de um reel de 2
 # minutos ser recusado por um filtro meu escrito errado. O unico teto que
@@ -237,13 +240,26 @@ def rodar(cmd, pasta):
 
 def codigo_da_falha(plataforma, detalhe):
     """Erro com codigo, nunca mensagem generica. A frase acionavel e montada
-    pela tela; aqui sai o codigo e o detalhe tecnico que ajuda a diagnosticar."""
+    pela tela; aqui sai o codigo e o detalhe tecnico que ajuda a diagnosticar.
+
+    No Instagram sao dois problemas diferentes e a tela precisa dizer coisas
+    diferentes. Limite de pedidos do IP (429) passa sozinho. Post que o
+    Instagram nao entrega a visitante sem login ("empty media response",
+    medido em 2026-11-18 no Dfo-mnsMXXZ, tanto no Render quanto fora dele)
+    nao passa esperando. Antes os dois viravam INSTAGRAM_BLOQUEADO, porque a
+    mensagem do segundo cita "--cookies" e casava com a palavra "cookies".
+    """
     t = detalhe.lower()
-    bloqueio = any(m in t for m in ("429", "403", "login", "sign in", "rate-limit", "cookies"))
     if plataforma == "youtube":
         return "YOUTUBE_BLOQUEADO"
-    if plataforma == "instagram" and bloqueio:
-        return "INSTAGRAM_BLOQUEADO"
+    if plataforma == "instagram":
+        if any(m in t for m in ("429", "too many requests", "rate-limit")):
+            return "INSTAGRAM_BLOQUEADO"
+        if any(m in t for m in ("empty media response", "registered users", "restricted video",
+                                "login required", "requested content is not available")):
+            return "INSTAGRAM_SEM_ACESSO"
+        if any(m in t for m in ("403", "login", "sign in", "cookies")):
+            return "INSTAGRAM_BLOQUEADO"
     return "DOWNLOAD_FALHOU"
 
 
@@ -347,7 +363,7 @@ def baixar_audio(url, plataforma, pasta):
         # Um formato indisponivel pode falhar sem arquivo enquanto o video
         # completo continua acessivel. Bloqueio de acesso, sim, nao melhora.
         if not baixados:
-            if codigo_da_falha(plataforma, detalhe) == "INSTAGRAM_BLOQUEADO" or nome == "video inteiro":
+            if codigo_da_falha(plataforma, detalhe) in ("INSTAGRAM_BLOQUEADO", "INSTAGRAM_SEM_ACESSO") or nome == "video inteiro":
                 raise Falha(codigo_da_falha(plataforma, detalhe), detalhe)
             continue
 
@@ -797,7 +813,7 @@ class Handler(BaseHTTPRequestHandler):
             # escrita no codigo. Assim ligar o Turnstile e mexer no Render, nao
             # publicar versao nova do site.
             self.json(200, {
-                "versao": "2026-10-23.2",
+                "versao": "2026-11-18.1",
                 "turnstile": os.environ.get("TURNSTILE_SITEKEY") or None,
                 "limiteDia": LIMITE_DIA or None,
                 "limiteEnvioBytes": LIMITE_ENVIO_BYTES,
