@@ -926,6 +926,11 @@ class Handler(BaseHTTPRequestHandler):
             pasta = None  # O worker assume a limpeza, inclusive se falhar.
         except (Falha, OSError) as erro:
             self.close_connection = True  # Pode haver corpo ainda nao lido.
+            # Apaga o arquivo parcial antes de responder, para quem recebe o
+            # erro nao ver a pasta ainda no disco.
+            if pasta:
+                pasta.cleanup()
+                pasta = None
             codigo = erro.codigo if isinstance(erro, Falha) else "ENVIO_INTERROMPIDO"
             detalhe = erro.detalhe if isinstance(erro, Falha) else "a conexao caiu durante o envio"
             status = 413 if codigo == "ENVIO_GRANDE_DEMAIS" else 429 if codigo == "LIMITE_DIARIO_ATINGIDO" else 400
